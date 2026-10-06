@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nakfreeajer/artifact-relay-manager/schemas/relay-project.schema.json",
+  "title": "Relay Project Identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "repository"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[^/\\s]+/[^/\\s]+$"
+    }
+  }
+}
