@@ -185,7 +185,7 @@ def _load_drive_config(path: Path) -> dict:
     return value
 
 
-def _identity(client: DriveClient, config: dict) -> None:
+def _identity(client: DriveClient, config: dict) -> tuple:
     folder = client.metadata(config["folderId"])
     if folder.get("id") != config["folderId"] or folder.get("mimeType") != FOLDER_MIME or folder.get("trashed") is not False:
         raise DriveError("configured Drive root is missing, trashed, or not a folder")
@@ -203,6 +203,9 @@ def _identity(client: DriveClient, config: dict) -> None:
         raise DriveError("Drive identity file has invalid ID metadata")
     if not isinstance(identity_file.get("capabilities"), dict) or identity_file["capabilities"].get("canDownload") is not True:
         raise DriveError("Drive identity file is not downloadable")
+    version = identity_file.get("version")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+", version):
+        raise DriveError("Drive identity file has invalid version metadata")
     data = client.media(identity_file["id"], MAX_IDENTITY_BYTES)
     identity = _safe_json(data)
     if (set(identity) != {"schemaVersion", "projectId", "repository"}
@@ -210,6 +213,21 @@ def _identity(client: DriveClient, config: dict) -> None:
             or identity.get("projectId") != config["projectId"]
             or identity.get("repository") != config["repository"]):
         raise DriveError("Drive project/repository identity mismatch")
+    return (folder["id"], folder["mimeType"], folder["trashed"], identity_file["id"],
+            identity_file["version"], identity_file["mimeType"], hashlib.sha256(data).hexdigest())
+
+
+def _verify_artifact_snapshot(client: DriveClient, listed: dict, config: dict) -> None:
+    current = client.metadata(listed["id"])
+    parents = current.get("parents")
+    caps = current.get("capabilities")
+    if (current.get("id") != listed["id"] or current.get("version") != listed["version"]
+            or current.get("size") != listed["size"] or current.get("mimeType") != listed["mimeType"]
+            or current.get("trashed") is not False or not isinstance(parents, list)
+            or config["folderId"] not in parents or current.get("mimeType") == FOLDER_MIME
+            or current.get("mimeType", "").startswith("application/vnd.google-apps.")
+            or not isinstance(caps, dict) or caps.get("canDownload") is not True):
+        raise DriveError("Drive artifact changed during media download")
 
 
 def _stage_path(config: dict, file_id: str, version: str) -> Path:
@@ -226,7 +244,7 @@ def poll_drive(config_path: Path, state_path: Path, token: str | None = None,
     if not token:
         raise DriveError("RELAY_GDRIVE_ACCESS_TOKEN is not set")
     client = DriveClient(token, api_base_url)
-    _identity(client, config)
+    identity_snapshot = _identity(client, config)
     children = client.list_children(config["folderId"])
     staged = []
     for item in children:
@@ -263,11 +281,14 @@ def poll_drive(config_path: Path, state_path: Path, token: str | None = None,
         data = client.media(file_id, relay.MAX_BYTES)
         if len(data) != int(size):
             raise DriveError("Drive media length does not match metadata")
+        _verify_artifact_snapshot(client, item, config)
         local_path = _stage_path(config, file_id, version)
         _write_atomic(local_path, data)
         staged.append({"fileId": file_id, "version": version, "path": local_path, "result": "staged"})
 
     # All Drive reads finish successfully before any Watcher delivery begins.
+    if _identity(client, config) != identity_snapshot:
+        raise DriveError("Drive project identity changed during poll")
     workspace = config["_workspace"]
     workspace.mkdir(parents=True, exist_ok=True)
     identity = {"schemaVersion": 1, "projectId": config["projectId"], "repository": config["repository"]}

@@ -23,6 +23,7 @@ class DriveHandler(http.server.BaseHTTPRequestHandler):
     auth_expected = "test-token"
     fail = False
     calls = []
+    after_media = None
 
     def do_GET(self):
         type(self).calls.append((self.path, self.headers.get("Authorization")))
@@ -47,6 +48,8 @@ class DriveHandler(http.server.BaseHTTPRequestHandler):
         item = type(self).files[file_id]
         if params.get("alt") == ["media"]:
             data = type(self).identity_bytes if file_id == "identity" else item.get("data", b"")
+            if file_id != "identity" and type(self).after_media is not None:
+                type(self).after_media(file_id)
             return self.respond(data, "application/octet-stream")
         return self.respond(json.dumps({key: value for key, value in item.items() if key != "data"}).encode(), "application/json")
 
@@ -93,6 +96,7 @@ class DriveAdapterTests(unittest.TestCase):
         DriveHandler.identity_bytes = self.identity("project-1", "example/repo")
         DriveHandler.fail = False
         DriveHandler.calls = []
+        DriveHandler.after_media = None
         WatcherHandler.events = []
         self.drive, self.drive_thread = self.start_server(DriveHandler)
         self.watcher, self.watcher_thread = self.start_server(WatcherHandler)
@@ -197,6 +201,40 @@ class DriveAdapterTests(unittest.TestCase):
         DriveHandler.fail = True
         with self.assertRaises(drive_adapter.DriveError): self.poll()
         self.assertFalse(WatcherHandler.events)
+
+    def test_same_size_version_race_fails_before_staging_or_delivery(self):
+        def change_version(file_id):
+            item = DriveHandler.files[file_id]
+            item["version"] = "11"
+            item["data"] = b"updated"
+        DriveHandler.after_media = change_version
+        with self.assertRaises(drive_adapter.DriveError): self.poll()
+        self.assertFalse(WatcherHandler.events)
+        self.assertFalse(self.state_path.exists())
+        staged = self.workspace / "staged" / hashlib.sha256(b"project-1").hexdigest() / hashlib.sha256(b"artifact-1").hexdigest() / "10.bin"
+        self.assertFalse(staged.exists())
+
+    def test_post_download_parent_and_state_races_fail_closed(self):
+        changes = (
+            ("moved", lambda item: item.update(parents=["other-folder"])),
+            ("trashed", lambda item: item.update(trashed=True)),
+            ("workspace", lambda item: item.update(mimeType="application/vnd.google-apps.document")),
+            ("not-downloadable", lambda item: item.update(capabilities={"canDownload": False})),
+        )
+        for name, change in changes:
+            with self.subTest(name=name):
+                DriveHandler.files["artifact-1"].update({"mimeType": "application/octet-stream", "parents": [self.folder], "trashed": False, "capabilities": {"canDownload": True}, "version": "10", "size": "7", "data": b"caf\xc3\xa9\r\n"})
+                DriveHandler.after_media = lambda file_id, change=change: change(DriveHandler.files[file_id])
+                with self.assertRaises(drive_adapter.DriveError): self.poll()
+                self.assertFalse(WatcherHandler.events)
+                self.assertFalse(self.state_path.exists())
+        DriveHandler.after_media = None
+
+    def test_identity_change_after_staging_aborts_before_delivery(self):
+        DriveHandler.after_media = lambda _file_id: setattr(DriveHandler, "identity_bytes", self.identity("changed-project", "example/repo"))
+        with self.assertRaises(drive_adapter.DriveError): self.poll()
+        self.assertFalse(WatcherHandler.events)
+        self.assertFalse(self.state_path.exists())
 
     def test_test_api_override_rejects_remote_host(self):
         with self.assertRaises(drive_adapter.DriveError): drive_adapter.DriveClient("test-token", "https://example.com")
