@@ -18,7 +18,13 @@ From the repository root:
 python tools/bootstrap_agent_work.py
 ```
 
-This creates the ignored local `.agent-work/` evidence folders used by Architect/Executor development.
+If the active milestone is already known:
+
+```bash
+python tools/bootstrap_agent_work.py --milestone RELAY.CORE.VERTICAL.1A
+```
+
+This creates the ignored local `.agent-work/` evidence folders plus the milestone-specific `scope/`, `evidence/`, and `decisions/` directories without adding any Orchestrator runtime tree.
 
 ## Next implementation target
 Build one bounded runnable Relay vertical slice:
