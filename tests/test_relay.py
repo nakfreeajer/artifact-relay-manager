@@ -38,11 +38,27 @@ class RelayTests(unittest.TestCase):
   self.assertEqual(rec["artifact"]["sha256"],hashlib.sha256("na�ve\n".encode()).hexdigest())
   self.assertNotEqual(rec["artifact"]["sha256"],hashlib.sha256("na�ve\r\n".encode()).hexdigest())
  def test_unavailable_then_fresh_retry_same_id(self):
-  self.server.shutdown();eid,result=self.run_event();self.assertEqual(result,"pending");self.assertEqual(relay.status(self.sp)["pending"],1)
+  self.server.shutdown();self.server.server_close();eid,result=self.run_event();self.assertEqual(result,"pending");self.assertEqual(relay.status(self.sp)["pending"],1)
   self.server= http.server.ThreadingHTTPServer(("127.0.0.1",self.config_port if False else 0),Sink)
   self.config["watcherEndpoint"]=f"http://127.0.0.1:{self.server.server_port}/";self.write_config()
   th=threading.Thread(target=self.server.serve_forever,daemon=True);th.start()
   got=relay.retry(self.cp,self.sp);self.assertEqual(got,[(eid,"delivered")]);self.assertEqual(Sink.seen[-1][0]["eventId"],eid)
+ def pending_state(self):
+  self.server.shutdown();self.server.server_close();eid,result=self.run_event();self.assertEqual(result,"pending");return eid
+ def assert_retry_rejected_without_delivery(self,mutate):
+  eid=self.pending_state();data=json.loads(self.sp.read_text());mutate(data["events"][eid]);self.sp.write_text(json.dumps(data));Sink.seen.clear()
+  with self.assertRaises(relay.RelayError):relay.retry(self.cp,self.sp)
+  self.assertFalse(Sink.seen)
+ def test_retry_rejects_cross_project_event(self):
+  eid=self.pending_state();data=json.loads(self.sp.read_text());record=data["events"][eid]
+  key=json.dumps(["other-project",record["event"]["artifact"]["artifactId"],record["event"]["provider"]["version"],record["event"]["eventType"]],separators=(",",":"))
+  other="relay-"+hashlib.sha256(key.encode()).hexdigest();record["dedupeKey"]=key;record["event"]["projectId"]="other-project";record["event"]["eventId"]=other;data["events"]={other:record};self.sp.write_text(json.dumps(data));Sink.seen.clear()
+  with self.assertRaises(relay.RelayError):relay.retry(self.cp,self.sp)
+  self.assertFalse(Sink.seen)
+ def test_retry_rejects_semantically_malformed_event(self):
+  self.assert_retry_rejected_without_delivery(lambda r:r["event"]["artifact"].update(byteLength="seven"))
+ def test_retry_rejects_event_id_dedupe_inconsistency(self):
+  self.assert_retry_rejected_without_delivery(lambda r:r.update(dedupeKey='["p1","other-item","v1","PROMPT_READY"]'))
  def test_ack_dedup_after_reload(self):
   eid,_=self.run_event();self.assertEqual(relay.process(self.cp,self.sp,self.fp),(eid,"deduplicated"));self.assertEqual(len(Sink.seen),1)
  def test_corrupt_config_and_state_fail_closed(self):

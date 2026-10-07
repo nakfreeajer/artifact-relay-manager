@@ -28,12 +28,33 @@ def config(p):
  r=Path(c["fixtureRoot"]); c["_root"]=(p.parent/r).resolve() if not r.is_absolute() else r.resolve()
  if not isinstance(c["watcherEndpoint"],str) or not re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+(?:/[^\s]*)?",c["watcherEndpoint"]): raise RelayError("Watcher must use loopback HTTP")
  return c
-def state(p):
+def validate_record(eid,r,project_id=None):
+ if not isinstance(r,dict) or set(r)!={"dedupeKey","event","status","attempts","acknowledgement"} or r.get("status") not in ("pending","acknowledged") or type(r.get("attempts")) is not int or r["attempts"]<0 or not isinstance(r.get("event"),dict) or not isinstance(r.get("dedupeKey"),str): raise RelayError("invalid event state record")
+ e=r["event"]
+ required={"schemaVersion","eventId","projectId","eventType","taskId","artifact","provider","observedAt"}
+ if set(e)!=required or e.get("schemaVersion")!=1 or not isinstance(e.get("eventId"),str) or not isinstance(e.get("projectId"),str) or e.get("eventType") not in EVENTS or (e.get("taskId") is not None and not isinstance(e.get("taskId"),str)): raise RelayError("invalid normalized event")
+ a=e.get("artifact"); p=e.get("provider")
+ if not isinstance(a,dict) or set(a)!={"artifactId","sha256","byteLength"} or not isinstance(a.get("artifactId"),str) or not a["artifactId"] or not isinstance(a.get("sha256"),str) or not re.fullmatch(r"[0-9a-fA-F]{64}",a["sha256"]) or type(a.get("byteLength")) is not int or a["byteLength"]<0: raise RelayError("invalid normalized artifact")
+ if not isinstance(p,dict) or set(p)!={"kind","version"} or p.get("kind")!="google-drive" or not isinstance(p.get("version"),str) or not p["version"]: raise RelayError("invalid normalized provider")
+ if not isinstance(e.get("observedAt"),str): raise RelayError("invalid normalized timestamp")
+ try: observed=datetime.fromisoformat(e["observedAt"].replace("Z","+00:00"))
+ except ValueError as exc: raise RelayError("invalid normalized timestamp") from exc
+ if observed.tzinfo is None: raise RelayError("normalized timestamp must include timezone")
+ try: key=json.loads(r["dedupeKey"])
+ except json.JSONDecodeError as exc: raise RelayError("invalid dedupe identity") from exc
+ if not isinstance(key,list) or len(key)!=4 or not all(isinstance(x,str) and x for x in key): raise RelayError("invalid dedupe identity")
+ if key!=[e["projectId"],a["artifactId"],p["version"],e["eventType"]]: raise RelayError("event/dedupe identity mismatch")
+ expected="relay-"+hashlib.sha256(r["dedupeKey"].encode("utf-8")).hexdigest()
+ if eid!=expected or e["eventId"]!=expected: raise RelayError("event id/dedupe identity mismatch")
+ if project_id is not None and e["projectId"]!=project_id: raise RelayError("persisted event belongs to another project")
+ if r["status"]=="acknowledged" and (not isinstance(r["acknowledgement"],str) or r["acknowledgement"] not in ACKS): raise RelayError("invalid persisted acknowledgement")
+ if r["status"]=="pending" and r["acknowledgement"] is not None: raise RelayError("pending event has acknowledgement")
+
+def state(p,project_id=None):
  if not p.exists(): return {"schemaVersion":1,"events":{}}
  s=readj(p)
  if set(s)!={"schemaVersion","events"} or s.get("schemaVersion")!=1 or not isinstance(s["events"],dict): raise RelayError("invalid state structure")
- for eid,r in s["events"].items():
-  if not isinstance(r,dict) or set(r)!={"dedupeKey","event","status","attempts","acknowledgement"} or r["status"] not in ("pending","acknowledged") or type(r["attempts"]) is not int or r["attempts"]<0 or not isinstance(r["event"],dict) or r["event"].get("eventId")!=eid or not isinstance(r["dedupeKey"],str): raise RelayError("invalid event state record")
+ for eid,r in s["events"].items(): validate_record(eid,r,project_id)
  return s
 def observe(c,fp):
  f=readj(fp)
@@ -64,13 +85,13 @@ def deliver(c,sp,s,eid):
  if not isinstance(ack,dict) or set(ack)!={"disposition"} or ack["disposition"] not in ACKS:return "pending"
  r["status"]="acknowledged";r["acknowledgement"]=ack["disposition"];save(sp,s);return "delivered"
 def process(cp,sp,fp):
- c=config(cp);s=state(sp);k,e=observe(c,fp);eid=e["eventId"]
+ c=config(cp);s=state(sp,c["projectId"]);k,e=observe(c,fp);eid=e["eventId"]
  if eid in s["events"]:
   if s["events"][eid]["dedupeKey"]!=k:raise RelayError("event identity conflict")
  else:s["events"][eid]={"dedupeKey":k,"event":e,"status":"pending","attempts":0,"acknowledgement":None};save(sp,s)
  return eid,deliver(c,sp,s,eid)
 def retry(cp,sp):
- c=config(cp);s=state(sp);return [(eid,deliver(c,sp,s,eid)) for eid,r in list(s["events"].items()) if r["status"]=="pending"]
+ c=config(cp);s=state(sp,c["projectId"]);return [(eid,deliver(c,sp,s,eid)) for eid,r in list(s["events"].items()) if r["status"]=="pending"]
 def status(sp):
  s=state(sp);o={"events":len(s["events"]),"pending":0,"acknowledged":0}
  for r in s["events"].values():o[r["status"]]+=1
