@@ -80,7 +80,7 @@ Project-specific paths/endpoints and enable/disable controls.
 - service startup behavior;
 - polling/change-stream tuning;
 - log retention;
-- database location;
+- local state location;
 - diagnostics export.
 
 ## Safety UX

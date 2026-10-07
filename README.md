@@ -26,7 +26,7 @@ One installation contains:
 - a desktop UI for project/folder configuration, status, health, and event history;
 - a Google Drive adapter;
 - a local normalized event interface used by project Watchers;
-- SQLite state for configuration, provider cursors, deduplication, delivery attempts, and health.
+- simple local durable state for configuration, provider cursors, deduplication, delivery attempts, and health; add a database only if demonstrated runtime or scale evidence requires it.
 
 ## Multi-project model
 

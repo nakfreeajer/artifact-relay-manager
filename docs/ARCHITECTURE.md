@@ -55,7 +55,9 @@ Responsibilities:
 
 The UI does not authorize Executor work.
 
-### SQLite store
+### Local durable state
+
+The MVP uses simple local durable files. Add SQLite or another database only if demonstrated runtime failure or measured scale requires it.
 
 Owns local Relay durability:
 - project configuration;
@@ -122,7 +124,7 @@ This separation is intentional:
 ## 8. Crash recovery
 
 On Relay restart:
-1. open SQLite;
+1. open local durable state;
 2. restore project configs and provider cursors;
 3. query changes since each stored cursor;
 4. ignore already-recorded provider versions;
