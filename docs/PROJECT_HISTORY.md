@@ -1,5 +1,41 @@
 # Project History
 
+## 2026-10-08 — RELAY.GDRIVE.AUTH.LIVE.1A accepted
+Accepted the smallest secure Google Drive authentication bootstrap and first real bounded read-only qualification.
+
+Implementation:
+- Google installed desktop OAuth through the system browser;
+- ephemeral `127.0.0.1` loopback callback;
+- exact `drive.readonly` scope only;
+- OAuth client config supplied from a local file outside Git;
+- access/refresh credentials kept in process memory only;
+- no token cache or credential persistence;
+- `qualify-drive` validates one explicitly designated raw direct-child artifact;
+- qualification performs exact-byte SHA-256, byte-length, provider-version, MIME/parent/state and project-identity revalidation;
+- qualification creates no Watcher event, no Relay state and no Drive mutation.
+
+Accepted implementation commit:
+- `18d8d45c4ad505651f6ac4ef7f47165c0d068555`
+
+Deterministic validation:
+- 39 unit tests passed;
+- compile checks passed;
+- fake-Drive CLI lifecycle demonstration passed;
+- original core CLI lifecycle demonstration passed;
+- `git diff --check` passed.
+
+Real live qualification passed:
+- result `QUALIFIED_READ_ONLY`;
+- MIME `text/plain`;
+- byte length `26`;
+- Drive `File.version` `3`;
+- SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`;
+- zero Drive mutation by the qualification command.
+
+One live prerequisite failure was observed and resolved: browser OAuth authorization succeeded but Drive API returned HTTP 403 until Google Drive API was enabled in the same Google Cloud project as the Desktop OAuth client.
+
+No background scheduler, desktop UI, outbound publishing, database, multi-provider framework or project-Orchestrator workflow authority was introduced.
+
 ## 2026-10-08 — RELAY.GDRIVE.INBOUND.1A accepted
 Accepted the first real Google Drive inbound adapter around the deterministic Relay core.
 

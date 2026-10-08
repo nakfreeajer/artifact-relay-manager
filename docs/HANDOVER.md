@@ -46,6 +46,22 @@ Accepted commits:
 Deterministic validation: 29/29 tests passed.
 Live status: `LIVE_VALIDATION_BLOCKED=credentials_not_supplied`.
 
+### RELAY.GDRIVE.AUTH.LIVE.1A
+Accepted ephemeral Google Drive OAuth bootstrap and live read-only qualification:
+- installed desktop OAuth through the system browser;
+- ephemeral `127.0.0.1` loopback callback;
+- exact `drive.readonly` scope;
+- OAuth client file stays local and outside Git;
+- no Relay token/refresh-token persistence;
+- one designated raw direct-child artifact qualified without Watcher delivery or Relay state;
+- exact-byte/provider-version/project-identity safeguards preserved.
+
+Accepted commit:
+- `18d8d45c4ad505651f6ac4ef7f47165c0d068555`
+
+Deterministic validation: 39/39 tests passed.
+Live qualification: `QUALIFIED_READ_ONLY`, 26 bytes, `text/plain`, Drive version `3`, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
+
 ## Fresh worktree bootstrap
 From the repository root:
 
@@ -60,14 +76,15 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 ```
 
 ## Next bounded implementation target
-Add the smallest secure Google Drive authentication/session bootstrap and perform the first real read-only qualification against one explicitly configured test folder.
+Add the smallest secure persistent Google OAuth session mechanism so repeated one-shot Drive reads do not require browser authorization on every run.
 
 Keep this bounded:
-- obtain/use a Drive access token without committing credentials;
-- support the existing one-shot adapter;
-- qualify folder metadata, identity read, direct-child listing and one deliberately designated small raw test artifact;
-- preserve exact-byte/version binding and zero Drive mutation.
+- retain exact `drive.readonly`;
+- store no credential material in Git, project artifacts, Watcher payloads or ordinary logs;
+- use platform-appropriate protected local credential storage rather than a plaintext token file;
+- support the accepted one-shot adapter and qualification path;
+- prove restart/reuse/refresh behavior deterministically before any background scheduler is added.
 
 Do not start the background poll loop, desktop UI, outbound publishing, multi-provider framework, Codex launch/relaunch, Architect rollover, scheduler/workflow engine, or a database in the same milestone.
 
-Do not redesign accepted core/inbound behavior unless direct regression evidence proves a defect.
+Do not redesign accepted core/inbound/auth behavior unless direct regression evidence proves a defect.

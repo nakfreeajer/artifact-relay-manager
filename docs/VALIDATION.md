@@ -41,9 +41,35 @@ For `RELAY.GDRIVE.INBOUND.1A`, final reported validation was:
 - `python tests/cli_demo.py` — passed;
 - `git diff --check` — passed.
 
-Live provider qualification:
-- `LIVE_VALIDATION_BLOCKED=credentials_not_supplied`;
-- no live Drive request was made;
-- deterministic milestone acceptance therefore remains distinct from live qualification.
+Live provider qualification for `RELAY.GDRIVE.INBOUND.1A` was originally blocked because credentials were not supplied. That limitation was subsequently closed by `RELAY.GDRIVE.AUTH.LIVE.1A`.
 
 Any future live Drive validation must remain bounded to an explicitly configured project folder and must not mutate Drive.
+
+Accepted Google Drive OAuth / qualification coverage includes:
+- exact OAuth scope is `drive.readonly` and no broader scope;
+- installed-app loopback uses `127.0.0.1` with an ephemeral port;
+- missing dependency/client file fails safely;
+- web-client config and duplicate OAuth JSON keys fail closed;
+- auth failure text is sanitized;
+- access/refresh credential material is not printed or persisted by Relay;
+- valid designated raw artifact returns exact metadata/hash only;
+- outside-root/native/folder/trashed/not-downloadable/oversized designated items fail closed;
+- provider-version and project-identity races fail closed;
+- qualification creates zero Watcher events, zero Relay state and no staged artifact body.
+
+For `RELAY.GDRIVE.AUTH.LIVE.1A`, final deterministic validation was:
+- `python -m unittest discover -s tests -v` — 39 passed, 0 failed;
+- Python compile checks — passed;
+- `python tests/gdrive_cli_demo.py` — passed;
+- `python tests/cli_demo.py` — passed;
+- `git diff --check` — passed.
+
+Real provider qualification:
+- `QUALIFIED_READ_ONLY` — PASS;
+- designated artifact MIME: `text/plain`;
+- byte length: `26`;
+- Drive `File.version`: `3`;
+- SHA-256: `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`;
+- no Watcher delivery, Relay state mutation or Drive mutation occurred.
+
+A first live attempt reached browser OAuth successfully but received HTTP 403 from Drive until Google Drive API was enabled in the OAuth client's Google Cloud project. The repeated live command then passed.

@@ -2,7 +2,7 @@
 
 Project: `artifact-relay-manager`
 
-Status: `RELAY.GDRIVE.INBOUND.1A` is accepted on branch `gdrive-inbound-1a`.
+Status: `RELAY.GDRIVE.AUTH.LIVE.1A` is accepted on branch `gdrive-auth-live-1a` and awaiting merge to `main`.
 
 Accepted Relay core:
 - exact-byte SHA-256 and byte length;
@@ -25,28 +25,46 @@ Accepted Google Drive inbound capabilities:
 - native Google Workspace files skipped rather than exported/normalized;
 - post-download metadata recheck binds downloaded bytes to the listed file version, size, parent, MIME/state and download capability;
 - final Drive identity revalidation before Watcher delivery;
-- token kept in `RELAY_GDRIVE_ACCESS_TOKEN`, not tracked config/state/output;
 - production API origin fixed to Google Drive v3; loopback override is test-only.
 
-Accepted Drive commits:
-- `a1557e9c87c72e76243f5cebf1b59c9875ff472f` — Google Drive inbound adapter.
-- `23fa8b9142f798fa22de50ae4cfe8e1624576794` — bind downloaded bytes to provider version and revalidate identity before delivery.
+Accepted Google Drive authentication / qualification capabilities:
+- installed desktop OAuth flow through the system browser;
+- ephemeral `127.0.0.1` callback port;
+- exact OAuth scope `https://www.googleapis.com/auth/drive.readonly`;
+- OAuth client configuration supplied only from local `RELAY_GDRIVE_OAUTH_CLIENT_FILE`;
+- access/refresh credentials remain in process memory only and are not serialized by Relay;
+- `qualify-drive` validates one deliberately designated raw direct-child artifact;
+- qualification reuses exact-byte, provider-version, parent/state and project-identity consistency checks;
+- qualification creates no Watcher event, no Relay delivery state and performs no Drive mutation.
 
-Final deterministic validation reported by Executor and independently source-reviewed by Architect:
-- 29/29 unit tests passed;
+Accepted authentication implementation commit:
+- `18d8d45c4ad505651f6ac4ef7f47165c0d068555` — ephemeral Drive OAuth and read-only qualification.
+
+Deterministic validation:
+- 39/39 unit tests passed;
 - Python compile checks passed;
 - fake-Drive CLI lifecycle demo passed;
 - original core CLI demo passed;
 - `git diff --check` passed.
 
-Live qualification:
-- `LIVE_VALIDATION_BLOCKED=credentials_not_supplied`;
-- no live Drive request was made;
-- this does not invalidate deterministic milestone acceptance because live access was explicitly optional and separately reported.
+Real live qualification:
+- result: `QUALIFIED_READ_ONLY`;
+- designated artifact MIME: `text/plain`;
+- byte length: `26`;
+- Drive `File.version`: `3`;
+- SHA-256: `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`;
+- the configured folder and artifact relationship was independently rechecked through connected Drive metadata;
+- no Drive content was created, modified, renamed or deleted by the qualification command;
+- no Watcher event or Relay state was created by qualification.
+
+Observed live prerequisite failure before PASS:
+- browser OAuth authorization succeeded while the first Drive API request returned HTTP 403;
+- enabling Google Drive API in the same Google Cloud project as the Desktop OAuth client resolved the provider access failure.
 
 Current limitations:
-- bearer access token must be supplied externally;
-- no OAuth/login/refresh workflow;
+- OAuth session is ephemeral and requires browser authorization per authenticated run;
+- no secure persistent credential/session store;
+- `poll-drive` still retains the existing manual `RELAY_GDRIVE_ACCESS_TOKEN` path;
 - no background poll loop or scheduler;
 - no Drive Changes cursor;
 - no desktop UI;
@@ -57,6 +75,6 @@ Current limitations:
 - no project-Orchestrator workflow authority.
 
 Next engineering direction:
-- add the smallest secure Google Drive authentication/session bootstrap and perform the first bounded live read-only qualification against one explicitly configured test folder;
-- preserve the accepted one-shot adapter and core semantics;
-- do not add scheduler/UI/provider-framework complexity until authentication and live read-only qualification are proven.
+- add the smallest secure persistent Google OAuth session mechanism so repeated one-shot Drive reads do not require browser authorization every run;
+- preserve `drive.readonly`, project isolation, exact-byte/version binding and the accepted one-shot adapter;
+- do not start scheduler/UI/provider-framework complexity until secure session persistence is independently proven.

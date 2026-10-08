@@ -4,6 +4,14 @@ Record durable lessons backed by observed failures or demonstrated failure modes
 
 Do not promote speculative concerns into permanent complexity.
 
+## Proven — OAuth success does not prove the Drive API is enabled
+During the first real qualification, browser OAuth authorization completed successfully but the first Google Drive API request returned HTTP 403. Enabling Google Drive API in the same Google Cloud project as the Desktop OAuth client resolved the failure; the repeated read-only qualification then passed.
+
+Permanent rule:
+- treat OAuth authorization and provider API enablement as separate prerequisites;
+- when browser auth succeeds but the first provider request is forbidden, verify the target API is enabled in the OAuth client's Cloud project before redesigning auth code;
+- keep provider error reporting sanitized while preserving enough metadata to distinguish auth bootstrap from API-access failure.
+
 ## Proven — downloaded bytes must be rebound to provider version after download
 The first passing Google Drive inbound adapter trusted `File.version` and size from `files.list`, then downloaded media later. A same-size file update between those requests could associate newer bytes with an older provider-version event identity.
 

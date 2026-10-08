@@ -4,7 +4,7 @@ Reusable deterministic artifact transport for multi-project Architect / Watcher 
 
 ## Status
 
-The deterministic Relay core and bounded one-shot Google Drive inbound adapter are implemented and accepted on feature branches. No project dispatch authority is implemented here.
+The deterministic Relay core, bounded one-shot Google Drive inbound adapter, and ephemeral installed-app OAuth live qualification are implemented and accepted on feature branches. No project dispatch authority is implemented here.
 
 Current accepted capabilities include:
 - exact-byte SHA-256 and byte-length verification;
@@ -12,9 +12,11 @@ Current accepted capabilities include:
 - durable pre-delivery state, acknowledgement recording, deduplication and restart-safe retry;
 - fail-closed project/repository isolation;
 - one-shot Google Drive v3 inbound polling for one explicitly configured folder;
-- exact raw-file staging with provider-version revalidation before Watcher delivery.
+- exact raw-file staging with provider-version revalidation before Watcher delivery;
+- installed-app Google OAuth using the system browser, an ephemeral loopback callback, and exactly `drive.readonly`;
+- bounded real-Drive read-only qualification of one explicitly designated raw artifact without Watcher delivery or Relay state.
 
-Live Google Drive qualification is still pending because credentials were not supplied during the inbound-adapter milestone.
+A real Google Drive read-only qualification passed on 2026-10-08 against one explicitly configured test folder and designated 26-byte text artifact. The observed Drive version was `3` and the exact-byte SHA-256 was `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 
 ## Core rule
 
@@ -40,7 +42,7 @@ One installation is intended to contain:
 - a local normalized event interface used by project Watchers;
 - simple local durable state for configuration, provider cursors, deduplication, delivery attempts, and health; add a database only if demonstrated runtime or scale evidence requires it.
 
-The background service and desktop UI are not implemented yet.
+The OAuth session is currently ephemeral, so browser authorization is required for each authenticated qualification. A secure persistent session store, background service, and desktop UI are not implemented yet.
 
 ## Multi-project model
 
