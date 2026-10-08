@@ -113,4 +113,7 @@ def main():
    out=drive_adapter.qualify_drive(a.config,a.qualification_file_id,token,api_base_url=a.api_base_url);print(json.dumps(out,sort_keys=True));return 0
   print(json.dumps(status(a.state),sort_keys=True));return 0
  except RelayError as e: print("relay error: "+str(e),file=__import__("sys").stderr);return 1
-if __name__=="__main__":raise SystemExit(main())
+if __name__=="__main__":
+ import sys
+ sys.modules["relay"]=sys.modules[__name__]
+ raise SystemExit(main())

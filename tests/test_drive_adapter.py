@@ -22,6 +22,7 @@ class DriveHandler(http.server.BaseHTTPRequestHandler):
     identity_bytes = b""
     auth_expected = "test-token"
     fail = False
+    fail_status = 503
     calls = []
     after_media = None
 
@@ -30,7 +31,7 @@ class DriveHandler(http.server.BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer " + type(self).auth_expected:
             return self.send_error(401)
         if type(self).fail:
-            return self.send_error(503)
+            return self.send_error(type(self).fail_status)
         parsed = urlsplit(self.path)
         params = parse_qs(parsed.query)
         if parsed.path.endswith("/files"):
@@ -96,6 +97,7 @@ class DriveAdapterTests(unittest.TestCase):
         DriveHandler.identity_bytes = self.identity("project-1", "example/repo")
         DriveHandler.auth_expected = "test-token"
         DriveHandler.fail = False
+        DriveHandler.fail_status = 503
         DriveHandler.calls = []
         DriveHandler.after_media = None
         WatcherHandler.events = []
@@ -120,6 +122,39 @@ class DriveAdapterTests(unittest.TestCase):
 
     def poll(self, **kwargs):
         return drive_adapter.poll_drive(self.config_path, self.state_path, token="test-token", api_base_url=self.api_base, **kwargs)
+
+    def script_cli(self, *, bootstrap_oauth=False, extra_env=None):
+        DriveHandler.files["artifact-1"]["data"] = b"body-secret"
+        DriveHandler.files["artifact-1"]["size"] = str(len(b"body-secret"))
+        env = os.environ.copy()
+        env.pop("RELAY_GDRIVE_OAUTH_CLIENT_FILE", None)
+        if bootstrap_oauth:
+            DriveHandler.auth_expected = "subprocess-token-secret"
+            bootstrap = self.root / "subprocess-bootstrap"
+            bootstrap.mkdir(exist_ok=True)
+            (bootstrap / "sitecustomize.py").write_text(
+                "import sys, types\n"
+                "package = types.ModuleType('google_auth_oauthlib')\npackage.__path__ = []\n"
+                "flow_module = types.ModuleType('google_auth_oauthlib.flow')\n"
+                "class _Credentials:\n    valid = True\n    token = 'subprocess-token-secret'\n"
+                "class _Flow:\n    def run_local_server(self, **kwargs): return _Credentials()\n"
+                "class _InstalledAppFlow:\n    @classmethod\n    def from_client_config(cls, config, scopes): return _Flow()\n"
+                "flow_module.InstalledAppFlow = _InstalledAppFlow\npackage.flow = flow_module\n"
+                "sys.modules['google_auth_oauthlib'] = package\n"
+                "sys.modules['google_auth_oauthlib.flow'] = flow_module\n",
+                encoding="utf-8",
+            )
+            client_file = self.root / "oauth-client.json"
+            client_file.write_text(json.dumps({"installed": {"client_id": "test-client", "client_secret": "oauth-client-secret", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}), encoding="utf-8")
+            env["RELAY_GDRIVE_OAUTH_CLIENT_FILE"] = str(client_file)
+            env["PYTHONPATH"] = str(bootstrap) + os.pathsep + env.get("PYTHONPATH", "")
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(
+            [sys.executable, "relay.py", "--config", str(self.config_path), "qualify-drive",
+             "--qualification-file-id", "artifact-1", "--api-base-url", self.api_base],
+            capture_output=True, text=True, env=env, timeout=15,
+        )
 
     def tearDown(self):
         for server in (self.drive, self.watcher):
@@ -300,6 +335,35 @@ class DriveAdapterTests(unittest.TestCase):
         self.assertEqual(payload["result"], "QUALIFIED_READ_ONLY")
         self.assertNotIn("access-token-secret", rendered)
         self.assertNotIn("caf\u00e9", rendered)
+        self.assertFalse(self.state_path.exists())
+        self.assertFalse(WatcherHandler.events)
+
+    def test_script_cli_catches_http_403_without_traceback_or_sensitive_data(self):
+        DriveHandler.fail = True
+        DriveHandler.fail_status = 403
+        result = self.script_cli(bootstrap_oauth=True)
+        combined = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relay error: Google Drive API returned HTTP 403", result.stderr)
+        self.assertNotIn("Traceback", combined)
+        for secret in ("subprocess-token-secret", "oauth-client-secret", "authorization-code-secret", "body-secret"):
+            self.assertNotIn(secret, combined)
+
+    def test_script_cli_missing_oauth_client_is_sanitized(self):
+        result = self.script_cli()
+        combined = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relay error: RELAY_GDRIVE_OAUTH_CLIENT_FILE is not set", result.stderr)
+        self.assertNotIn("Traceback", combined)
+
+    def test_script_cli_success_still_qualifies_with_metadata_only_output(self):
+        result = self.script_cli(bootstrap_oauth=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["result"], "QUALIFIED_READ_ONLY")
+        self.assertEqual(output["byteLength"], len(b"body-secret"))
+        self.assertNotIn("subprocess-token-secret", result.stdout + result.stderr)
+        self.assertNotIn("caf\u00e9", result.stdout + result.stderr)
         self.assertFalse(self.state_path.exists())
         self.assertFalse(WatcherHandler.events)
 
