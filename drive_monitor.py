@@ -54,6 +54,13 @@ def _cycle(config_path: Path, state_path: Path, config: dict, session: Any,
     return _stats(results, pending_retries)
 
 
+def run_cycle(config_path: Path, state_path: Path, config: dict, session: Any, *,
+              poller: Callable = drive_adapter.poll_drive,
+              retryer: Callable = relay.retry_pending) -> dict:
+    """Run exactly one configured project's existing Drive/Relay monitor cycle."""
+    return _cycle(config_path, state_path, config, session, poller, retryer)
+
+
 def run_monitor(config_path: Path, state_path: Path, config: dict, session: Any, *,
                 interval_seconds: int = 30, max_cycles: int | None = None,
                 poller: Callable = drive_adapter.poll_drive,
@@ -77,7 +84,7 @@ def run_monitor(config_path: Path, state_path: Path, config: dict, session: Any,
                     "cycle": cycle_number,
                     "projectId": config["projectId"],
                     "result": "OK",
-                    **_cycle(config_path, state_path, config, session, poller, retryer),
+                    **run_cycle(config_path, state_path, config, session, poller=poller, retryer=retryer),
                 }
                 degraded_streak = 0
                 delay = interval_seconds
