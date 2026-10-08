@@ -121,8 +121,8 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 
 ## Handover boundary
 
-RELAY.GDRIVE.MONITOR.LOOP.1A completes foreground Windows Google Drive monitoring. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
+RELAY.PROJECT.REGISTRY.1A completes the local durable project registry. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
 
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.
-- Do not add a scheduler, UI, outbound publishing, provider framework, or database unless explicitly selected in a future bounded milestone.
+- Do not add a scheduler, UI, outbound publishing, provider framework, database, multi-project supervisor, or Windows Service unless explicitly selected in a future bounded milestone.
