@@ -18,7 +18,7 @@ Create a local Drive project config (keep it out of Git):
 }
 ```
 
-Set `RELAY_GDRIVE_ACCESS_TOKEN` in the process environment, then run:
+Set `RELAY_GDRIVE_ACCESS_TOKEN` for an explicit one-shot manual-token override, then run:
 
 ```bash
 python relay.py --config drive-project.json --state relay-state.json poll-drive
@@ -30,7 +30,15 @@ The relay workspace stores exact bytes under `staged/<project-hash>/<file-hash>/
 
 ## Live read-only qualification
 
-Install the optional authentication dependencies with `python -m pip install -r requirements-gdrive-auth.txt`. Set `RELAY_GDRIVE_OAUTH_CLIENT_FILE` to a local Google OAuth Desktop app client JSON file. The command opens the system browser, requests only `drive.readonly`, and listens on an ephemeral `127.0.0.1` port. The access token exists only in the current process; the command does not write credentials, download/stage a file, create Relay events, or contact the Watcher.
+Install the optional authentication dependencies with `python -m pip install -r requirements-gdrive-auth.txt`. Set `RELAY_GDRIVE_OAUTH_CLIENT_FILE` to a local Google OAuth Desktop app client JSON file. On Windows, first use opens the system browser, requests only `drive.readonly`, and listens on an ephemeral `127.0.0.1` port. Relay protects the refresh token in a current-user DPAPI session file; later invocations refresh in memory without opening a browser. Access tokens and client secrets are not stored. Qualification does not write project artifacts, create Relay events, or contact the Watcher.
+
+Remove this local session and authorize again explicitly with:
+
+```bash
+python relay.py --config drive-project.json reset-drive-auth
+```
+
+Reset is local only and does not revoke Google authorization. Persistent sessions are Windows-only; other platforms fail closed rather than writing a plaintext token cache.
 
 Use a deliberately designated raw artifact no larger than 1 MiB that is a direct child of the configured root:
 

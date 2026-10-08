@@ -109,3 +109,14 @@ Established the reusable AMO working-folder scaffold for Artifact Relay Manager:
 - source-area placeholders matching the Relay package boundary;
 - ignored `.agent-work/` bootstrap utility;
 - no project-Orchestrator runtime internals.
+
+## 2026-10-08 — RELAY.GDRIVE.AUTH.SESSION.1A implementation
+
+Added the bounded Windows protected Google Drive OAuth session:
+- refresh-token-only payload protected by current-user DPAPI and bound to the installed client and exact read-only scope;
+- atomic replacement, fail-closed corruption behavior, refresh-token rotation, refresh failure retention, fresh-process reuse, and local idempotent reset;
+- system browser remains the first-use authorization path; later fresh processes refresh without the browser;
+- deterministic test coverage includes actual Windows DPAPI round trip and CLI integration;
+- real read-only qualification succeeded in multiple fresh processes.
+
+Validation: 51 unit tests passed; Python compile checks, fake Drive lifecycle CLI demonstration, core CLI demonstration, and `git diff --check` passed. Sanitized evidence is recorded under the ignored milestone workspace. No Orchestrator workflow authority, scheduler, UI, database, merge, or tag was introduced.

@@ -4,7 +4,7 @@ Reusable deterministic artifact transport for multi-project Architect / Watcher 
 
 ## Status
 
-The deterministic Relay core, bounded one-shot Google Drive inbound adapter, and ephemeral installed-app OAuth live qualification are implemented and accepted on feature branches. No project dispatch authority is implemented here.
+The deterministic Relay core, bounded one-shot Google Drive inbound adapter, live read-only qualification, and Windows protected Google Drive OAuth session are implemented on bounded feature branches. No project dispatch authority is implemented here.
 
 Current accepted capabilities include:
 - exact-byte SHA-256 and byte-length verification;
@@ -14,9 +14,12 @@ Current accepted capabilities include:
 - one-shot Google Drive v3 inbound polling for one explicitly configured folder;
 - exact raw-file staging with provider-version revalidation before Watcher delivery;
 - installed-app Google OAuth using the system browser, an ephemeral loopback callback, and exactly `drive.readonly`;
+- Windows DPAPI-protected refresh-token session reuse across fresh processes, with local reset support;
 - bounded real-Drive read-only qualification of one explicitly designated raw artifact without Watcher delivery or Relay state.
 
 A real Google Drive read-only qualification passed on 2026-10-08 against one explicitly configured test folder and designated 26-byte text artifact. The observed Drive version was `3` and the exact-byte SHA-256 was `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
+
+The `RELAY.GDRIVE.AUTH.SESSION.1A` branch adds a current-user DPAPI encrypted local refresh-token file, bound to the installed client and exact scope. Fresh processes refresh silently; access tokens remain memory-only.
 
 ## Core rule
 

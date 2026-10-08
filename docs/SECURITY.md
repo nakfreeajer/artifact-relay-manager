@@ -16,13 +16,11 @@ Use the platform's secure credential storage where available.
 
 The accepted live qualification uses an installed desktop OAuth client with exactly `https://www.googleapis.com/auth/drive.readonly`.
 
-Current credential handling is deliberately ephemeral:
-- the OAuth client JSON is supplied from local `RELAY_GDRIVE_OAUTH_CLIENT_FILE` outside Git;
-- the authorization flow uses the system browser and an ephemeral `127.0.0.1` callback;
-- access and refresh credentials remain in process memory only;
-- Relay does not serialize a token cache yet.
+The OAuth client JSON is supplied from local `RELAY_GDRIVE_OAUTH_CLIENT_FILE` outside Git. The authorization flow uses the system browser, an ephemeral `127.0.0.1` callback, and exactly `drive.readonly`.
 
-A future persistent-session milestone must use protected local credential storage rather than a plaintext token file and must preserve the same no-log/no-artifact/no-Watcher-secret boundary.
+On Windows, Relay stores only the refresh token in a local file protected with current-user DPAPI. The storage filename is derived from a hash of client ID plus scope, and DPAPI optional entropy binds ciphertext to this application, Google Drive, client ID and scope. Writes replace the file atomically. Access tokens and client secrets remain in process memory only. Corrupt or undecryptable state fails closed without launching a browser. `reset-drive-auth` removes only this client/scope session and does not revoke it at Google.
+
+Persistent session storage currently supports Windows only. Provider credentials must never enter project artifacts, Watcher payloads or ordinary logs.
 
 ## Folder scope
 

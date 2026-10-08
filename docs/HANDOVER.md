@@ -63,6 +63,19 @@ Accepted commit:
 Deterministic validation after Architect Correction 1: 42/42 tests passed, including subprocess coverage for provider HTTP 403, missing OAuth client configuration, and a successful fake/local qualification.
 Live qualification: `QUALIFIED_READ_ONLY`, 26 bytes, `text/plain`, Drive version `3`, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 
+### RELAY.GDRIVE.AUTH.SESSION.1A
+Implemented Windows-only persistent Google OAuth session on branch `gdrive-auth-session-1a`:
+- source/tests commit: `c479aa144f5f69beebc236f60316cfe010f3d35f`;
+- refresh token is protected with current-user DPAPI and bound to application, client ID and exact `drive.readonly` scope;
+- refresh token is persisted atomically; access token and client secret remain in process memory;
+- fresh processes refresh without opening a browser;
+- corrupt state and refresh failures fail closed without exposing provider data or deleting the existing session;
+- `reset-drive-auth` removes only the local client/scope session and is idempotent;
+- real read-only qualification passed in separate fresh invocations, with browser authorization on first use and silent refresh in a later process;
+- Windows-only; no credential revocation, non-Windows protected session backend, scheduler or UI.
+
+Deterministic validation and bounded evidence are recorded in `docs/VALIDATION.md` and `.agent-work/milestones/RELAY.GDRIVE.AUTH.SESSION.1A/evidence/`.
+
 ## Fresh worktree bootstrap
 From the repository root:
 

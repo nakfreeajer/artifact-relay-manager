@@ -2,7 +2,7 @@
 
 Project: `artifact-relay-manager`
 
-Status: `RELAY.GDRIVE.AUTH.LIVE.1A` is accepted on branch `gdrive-auth-live-1a` and awaiting merge to `main`.
+Status: `RELAY.GDRIVE.AUTH.SESSION.1A` is implemented on branch `gdrive-auth-session-1a`; it is not merged to `main`.
 
 Accepted Relay core:
 - exact-byte SHA-256 and byte length;
@@ -41,6 +41,9 @@ Accepted authentication implementation commit:
 - `18d8d45c4ad505651f6ac4ef7f47165c0d068555` — ephemeral Drive OAuth and read-only qualification.
 - `eb3339a452badc14e9fb05668a96f128efbb03a2` — script-mode Drive/Auth error identity correction, verified with subprocess tests.
 
+`RELAY.GDRIVE.AUTH.SESSION.1A` adds a Windows current-user DPAPI protected refresh-token session. The deterministic suite and real read-only qualification verify fresh-process refresh reuse without reopening the browser. The protected file contains only the refresh token payload; client/scope identity is hashed into its filename and bound as DPAPI entropy. `reset-drive-auth` removes only that local session.
+Implementation commit: `c479aa144f5f69beebc236f60316cfe010f3d35f`.
+
 Deterministic validation:
 - 42/42 unit tests passed, including subprocess checks for HTTP 403, missing OAuth client configuration, and successful qualification;
 - Python compile checks passed;
@@ -64,8 +67,9 @@ Observed live prerequisite failure before PASS:
 - the script-mode correction was qualified locally with a deterministic fake Drive endpoint; the previously recorded real qualification result remains unchanged.
 
 Current limitations:
-- OAuth session is ephemeral and requires browser authorization per authenticated run;
-- no secure persistent credential/session store;
+- persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
+- reset removes the local token but does not revoke authorization at Google;
+- refresh failure is sanitized and keeps the existing session; recovery requires explicit operator action such as reset and browser reauthorization;
 - `poll-drive` still retains the existing manual `RELAY_GDRIVE_ACCESS_TOKEN` path;
 - no background poll loop or scheduler;
 - no Drive Changes cursor;
@@ -77,6 +81,5 @@ Current limitations:
 - no project-Orchestrator workflow authority.
 
 Next engineering direction:
-- add the smallest secure persistent Google OAuth session mechanism so repeated one-shot Drive reads do not require browser authorization every run;
-- preserve `drive.readonly`, project isolation, exact-byte/version binding and the accepted one-shot adapter;
-- do not start scheduler/UI/provider-framework complexity until secure session persistence is independently proven.
+- preserve the bounded Windows protected-session behavior while addressing future platform support only in a separately scoped milestone;
+- keep scheduler, UI, outbound publishing and provider expansion out of scope until separately authorized.
