@@ -1,4 +1,4 @@
-﻿# Current State
+# Current State
 
 Project: `artifact-relay-manager`
 
@@ -83,4 +83,3 @@ Current limitations:
 Next engineering direction:
 - preserve the bounded Windows protected-session behavior while addressing future platform support only in a separately scoped milestone;
 - keep scheduler, UI, outbound publishing and provider expansion out of scope until separately authorized.
-

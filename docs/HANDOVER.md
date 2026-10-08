@@ -1,4 +1,4 @@
-﻿# Handover
+# Handover
 
 ## Repository
 `nakfreeajer/artifact-relay-manager`
@@ -102,4 +102,3 @@ Keep this bounded:
 Do not start the background poll loop, desktop UI, outbound publishing, multi-provider framework, Codex launch/relaunch, Architect rollover, scheduler/workflow engine, or a database in the same milestone.
 
 Do not redesign accepted core/inbound/auth behavior unless direct regression evidence proves a defect.
-
