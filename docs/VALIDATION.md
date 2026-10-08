@@ -73,3 +73,17 @@ Real provider qualification:
 - no Watcher delivery, Relay state mutation or Drive mutation occurred.
 
 A first live attempt reached browser OAuth successfully but received HTTP 403 from Drive until Google Drive API was enabled in the OAuth client's Google Cloud project. The repeated live command then passed.
+
+Architect Correction 1 then used subprocess tests to reproduce and correct the sanitized CLI error-path defect. The executing `relay.py` module is now registered as `relay` before provider imports, so the CLI catches the same `RelayError` class its providers raise.
+
+Post-correction validation:
+- `python -m unittest discover -s tests -v` — 42 passed, 0 failed;
+- `python -m py_compile relay.py drive_adapter.py drive_auth.py tests/test_relay.py tests/cli_demo.py tests/test_drive_adapter.py tests/test_drive_auth.py tests/gdrive_cli_demo.py` — passed;
+- `python tests/gdrive_cli_demo.py` — passed;
+- `python tests/cli_demo.py` — passed;
+- `git diff --check` — passed;
+- subprocess `python relay.py ... qualify-drive` with fake Drive HTTP 403 — nonzero exit, sanitized `relay error: Google Drive API returned HTTP 403`, no traceback or credential/body leakage;
+- subprocess `python relay.py ... qualify-drive` without OAuth client configuration — nonzero exit, sanitized Relay auth error, no traceback;
+- subprocess fake/local successful `qualify-drive` — exit 0 and `QUALIFIED_READ_ONLY`.
+
+The successful real qualification evidence above remains the accepted live result. A further live re-run was not practical during this correction because the local OAuth client environment setting/file was unavailable; no live credentials or Drive content were accessed.

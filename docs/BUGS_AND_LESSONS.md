@@ -12,6 +12,18 @@ Permanent rule:
 - when browser auth succeeds but the first provider request is forbidden, verify the target API is enabled in the OAuth client's Cloud project before redesigning auth code;
 - keep provider error reporting sanitized while preserving enough metadata to distinguish auth bootstrap from API-access failure.
 
+## Proven — script-mode provider exceptions must share the CLI module identity
+The first post-authorization live Drive request returned HTTP 403. Running the documented `python relay.py ... qualify-drive` command emitted a traceback instead of the sanitized CLI error. Subprocess reproduction confirmed that script execution defined `RelayError` in `__main__`, while lazily imported Drive modules imported `relay` as a second module. Their provider/auth exceptions therefore did not match the class caught by `main()`.
+
+Correction:
+- before invoking `main()` in script mode, register the executing module as `sys.modules["relay"]`;
+- exercise HTTP 403 and missing OAuth-client errors through actual `python relay.py` subprocesses;
+- verify successful subprocess qualification keeps its existing output and exit behavior.
+
+Permanent rule:
+- test CLI exception behavior in subprocesses when provider modules are imported lazily;
+- keep expected provider/auth failures inside the CLI's sanitized error contract without catching arbitrary exceptions.
+
 ## Proven — downloaded bytes must be rebound to provider version after download
 The first passing Google Drive inbound adapter trusted `File.version` and size from `files.list`, then downloaded media later. A same-size file update between those requests could associate newer bytes with an older provider-version event identity.
 

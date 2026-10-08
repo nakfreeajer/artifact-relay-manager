@@ -39,9 +39,10 @@ Accepted Google Drive authentication / qualification capabilities:
 
 Accepted authentication implementation commit:
 - `18d8d45c4ad505651f6ac4ef7f47165c0d068555` — ephemeral Drive OAuth and read-only qualification.
+- `eb3339a452badc14e9fb05668a96f128efbb03a2` — script-mode Drive/Auth error identity correction, verified with subprocess tests.
 
 Deterministic validation:
-- 39/39 unit tests passed;
+- 42/42 unit tests passed, including subprocess checks for HTTP 403, missing OAuth client configuration, and successful qualification;
 - Python compile checks passed;
 - fake-Drive CLI lifecycle demo passed;
 - original core CLI demo passed;
@@ -60,6 +61,7 @@ Real live qualification:
 Observed live prerequisite failure before PASS:
 - browser OAuth authorization succeeded while the first Drive API request returned HTTP 403;
 - enabling Google Drive API in the same Google Cloud project as the Desktop OAuth client resolved the provider access failure.
+- the script-mode correction was qualified locally with a deterministic fake Drive endpoint; the previously recorded real qualification result remains unchanged.
 
 Current limitations:
 - OAuth session is ephemeral and requires browser authorization per authenticated run;

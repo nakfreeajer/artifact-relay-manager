@@ -34,6 +34,13 @@ Real live qualification passed:
 
 One live prerequisite failure was observed and resolved: browser OAuth authorization succeeded but Drive API returned HTTP 403 until Google Drive API was enabled in the same Google Cloud project as the Desktop OAuth client.
 
+Architect Correction 1 verified a separate CLI defect: `python relay.py` defined `RelayError` as `__main__.RelayError`, while lazy provider imports raised errors inheriting from a second `relay.RelayError`. The entry point now aliases the executing module as `relay` before calling `main()`. Actual subprocess tests confirm sanitized handling of HTTP 403 and missing-client failures, and preserve successful qualification behavior.
+
+Correction commit:
+- `eb3339a452badc14e9fb05668a96f128efbb03a2` — `fix(relay): sanitize script-mode Drive failures`.
+
+Post-correction deterministic validation: 42 unit tests passed, including the three subprocess cases.
+
 No background scheduler, desktop UI, outbound publishing, database, multi-provider framework or project-Orchestrator workflow authority was introduced.
 
 ## 2026-10-08 — RELAY.GDRIVE.INBOUND.1A accepted

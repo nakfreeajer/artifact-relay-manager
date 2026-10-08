@@ -58,8 +58,9 @@ Accepted ephemeral Google Drive OAuth bootstrap and live read-only qualification
 
 Accepted commit:
 - `18d8d45c4ad505651f6ac4ef7f47165c0d068555`
+- `eb3339a452badc14e9fb05668a96f128efbb03a2` — script-mode provider/auth failures now use the sanitized CLI error contract.
 
-Deterministic validation: 39/39 tests passed.
+Deterministic validation after Architect Correction 1: 42/42 tests passed, including subprocess coverage for provider HTTP 403, missing OAuth client configuration, and a successful fake/local qualification.
 Live qualification: `QUALIFIED_READ_ONLY`, 26 bytes, `text/plain`, Drive version `3`, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 
 ## Fresh worktree bootstrap
