@@ -1,0 +1,2 @@
+-r requirements-gdrive-auth.txt
+pywin32>=306

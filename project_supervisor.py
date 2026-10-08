@@ -64,6 +64,7 @@ def _project_record(entry: dict, session: Any, cycle_runner: Callable) -> tuple[
 
 def run_supervisor(registry_path: Path, *, interval_seconds: int = 30,
                    max_cycles: int | None = None,
+                   stop_event: Any = None,
                    session_factory: Callable[[], Any] | None = None,
                    cycle_runner: Callable[[dict, Any], dict] | None = None,
                    registry_factory: Callable[[Path], Any] = ProjectRegistry,
@@ -86,6 +87,9 @@ def run_supervisor(registry_path: Path, *, interval_seconds: int = 30,
     registry_degraded_streak = 0
     try:
         while max_cycles is None or cycle_number < max_cycles:
+            if stop_event is not None and stop_event.is_set():
+                emit({"cycle": cycle_number, "result": "STOPPED"})
+                break
             cycle_number += 1
             try:
                 projects = registry_factory(registry_path).load()
@@ -135,6 +139,9 @@ def run_supervisor(registry_path: Path, *, interval_seconds: int = 30,
             if max_cycles is not None and cycle_number >= max_cycles:
                 break
             sleeper(delay)
+            if stop_event is not None and stop_event.is_set():
+                emit({"cycle": cycle_number, "result": "STOPPED"})
+                break
     except KeyboardInterrupt:
         emit({"cycle": cycle_number, "result": "STOPPED"})
     return 0

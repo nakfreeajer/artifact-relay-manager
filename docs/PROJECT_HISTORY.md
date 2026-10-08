@@ -1,5 +1,11 @@
 # Project History
 
+## 2026-10-09 — RELAY.WINDOWS.SERVICE.1A implementation
+
+Added a minimal optional pywin32 Windows Service adapter around the existing foreground Project Supervisor. Service startup validates and refreshes an existing current-user DPAPI Drive session without browser fallback, then supplies that same session to the supervisor. SCM stop requests wake the supervisor between cycles for graceful shutdown. The foreground CLI and monitor-cycle implementation remain the shared runtime path.
+
+Deterministic lifecycle tests passed for supervisor reuse and clean start/stop, absent OAuth credentials, and a simulated DPAPI failure under an incompatible Windows identity. Full regression validation passed 100/100 tests. Python compile checks and `git diff --check` passed. Actual SCM install/start/stop qualification is blocked because `pywin32` is not installed in the available environment; no service was installed and no OAuth credential or Drive data was modified.
+
 ## 2026-10-08 — RELAY.PROJECT.SUPERVISOR.1A implementation
 
 Added a foreground sequential supervisor that reloads and validates the local project registry on every cycle, then runs one accepted monitor cycle for each enabled project in projectId order. It shares one lazy noninteractive DriveAuthSession across projects/cycles, isolates project-local failures, suppresses further project work after a shared auth failure, observes registry changes at cycle boundaries, and emits metadata-only cycle records. Ctrl+C emits `STOPPED`. No background service or workflow authority was added.

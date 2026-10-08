@@ -8,6 +8,8 @@ Status: `RELAY.PROJECT.SUPERVISOR.1A` is implemented on branch `project-supervis
 
 `RELAY.PROJECT.SUPERVISOR.1A` adds a foreground sequential supervisor. It reloads and validates the registry at each cycle boundary, runs enabled entries in deterministic projectId order, and executes one existing Drive monitor cycle for each. One lazily created noninteractive `DriveAuthSession` is shared across projects and cycles. Project-local provider/identity/Watcher/state failures do not stop later projects; a shared auth failure marks remaining projects auth-degraded for that cycle. Registry changes take effect on the next cycle. The CLI is `python relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]`.
 
+`RELAY.WINDOWS.SERVICE.1A` adds `relay_windows_service.py`, a minimal optional pywin32 Service Control Manager adapter. It validates one current-user protected Drive session noninteractively, passes that same session to the existing supervisor, and wakes the supervisor to stop between project cycles. Missing, unreadable, or identity-incompatible DPAPI credentials block monitoring. The foreground supervisor CLI remains available. Service lifecycle unit tests pass; actual SCM install/start/stop qualification is blocked in this environment because pywin32 is not installed, so no service was installed.
+
 Supervisor source/tests commit: `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`. Final deterministic validation passed: 97/97 tests, changed Python compile checks, both existing CLI demos, the dedicated two-project supervisor qualification, and `git diff --check`. Live one-project supervisor qualification passed on 2026-10-08 with the existing protected session, no browser, and no Drive mutation. Two cycles returned OK: cycle 1 delivered the designated current file once; cycle 2 deduplicated it. The file was version `3`, 26 bytes, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`. One acknowledged state event and one mock Watcher receipt shared event ID `relay-02471a4ffcf9a90b6ee27824533420ebda3c7f3a93d13b1e88c6525438a76ae9`. The existing protected session remained usable after qualification. Sanitized evidence is in ignored `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/live-supervisor-qualification.json`.
 
 Registry source/tests commit: `6848633a69aba57b5b8f86596c5ccecce6d3c664`. Final deterministic validation passed: 82/82 tests; changed Python compile checks; both existing CLI demos; and `git diff --check`. The six-command local CLI qualification passed without Drive, Watcher, OAuth/browser, or protected-session access.
@@ -96,7 +98,7 @@ Observed live prerequisite failure before PASS:
 
 Current limitations:
 - foreground supervisor is available and executes projects sequentially in one process;
-- Windows Service/background host and supervisor service-control integration are not implemented;
+- Windows Service host is implemented on `windows-service-1a`; SCM installation and service-account qualification remain unverified here;
 - desktop UI and supervisor management API are not implemented;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;

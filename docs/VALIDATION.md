@@ -1,5 +1,23 @@
 # Validation
 
+## RELAY.WINDOWS.SERVICE.1A
+
+Deterministic lifecycle coverage:
+- clean host start, reuse of the existing `project_supervisor.run_supervisor`, shared validated session, and stop-event wakeup between cycles;
+- missing protected Drive session fails closed before the supervisor starts;
+- simulated current-user DPAPI decryption failure under an incompatible service identity fails closed before monitoring;
+- service startup uses `DriveAuthSession` only; it has no browser OAuth path.
+
+Validation results:
+- `python -m unittest discover -s tests -p test_relay_windows_service.py -v` — 3 passed, 0 failed;
+- `python -m unittest discover -s tests -v` — 100 passed, 0 failed;
+- `python -m py_compile project_supervisor.py relay_windows_service.py tests/test_relay_windows_service.py` — passed;
+- `git diff --check` — passed.
+
+Actual Windows SCM qualification is `BLOCKED=pywin32_not_installed`. `pywin32` was absent from the current Python environment. No service was installed or started. Install the optional dependency from `requirements-windows-service.txt`, then configure the service to run as the Windows account that owns the DPAPI session and provide `RELAY_GDRIVE_OAUTH_CLIENT_FILE` to its process. The adapter validates the protected session before invoking supervisor cycles and fails closed on unavailable credentials, including current-user DPAPI identity mismatch. No OAuth session was reset and no Google Drive content was modified.
+
+Limitations: service deployment/account configuration and actual SCM lifecycle remain unqualified; interactive browser authorization is intentionally unavailable in service mode. No desktop UI, service management API, scheduler, database, provider framework, or project-Orchestrator workflow authority was added.
+
 ## RELAY.PROJECT.SUPERVISOR.1A
 
 Supervisor coverage proves zero-enabled `IDLE` without auth creation or state access; deterministic sequential execution with each registry entry's own config/state path; one auth object and one refresh reused across projects/cycles; project-local failure isolation; pending Watcher delivery remains in the same project's Relay state/event identity; shared-auth failure skips remaining project calls and retries on a later cycle; corrupt registry processes zero projects and recovers after repair; bounded registry backoff; next-cycle enable/disable/add/remove behavior; metadata-only output; and clean `STOPPED` handling.

@@ -13,6 +13,18 @@ This project deliberately omits project-Orchestrator internals.
 
 ## Accepted milestones
 
+### RELAY.WINDOWS.SERVICE.1A
+Implemented on branch `windows-service-1a`:
+- optional `relay_windows_service.py` pywin32 service adapter delegates every monitor cycle to `project_supervisor.run_supervisor`;
+- service startup validates and refreshes an existing current-user DPAPI session before monitoring, then reuses that single session for all cycles; browser OAuth is not available in service startup;
+- SCM stop signals wake the supervisor and stop it cleanly between cycles;
+- deterministic tests cover clean start/stop with the existing supervisor, missing OAuth credentials, and simulated DPAPI failure under an incompatible service identity;
+- actual Windows SCM qualification was not run because pywin32 is absent in this environment; no service was installed.
+
+Install the optional host dependency with `python -m pip install -r requirements-windows-service.txt`. Configure the Windows service to run under the account that owns the protected Drive session and make `RELAY_GDRIVE_OAUTH_CLIENT_FILE` available to that service process. An incompatible account or unavailable session fails closed before project cycles.
+
+No desktop UI, management API, database, scheduler, provider framework, or project-Orchestrator workflow authority was added. No next milestone is selected here; stop for Architect review.
+
 ### RELAY.PROJECT.REGISTRY.1A
 Implemented on branch `project-registry-1a`:
 - schemaVersion 1 local JSON registry at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` by default;
