@@ -32,19 +32,26 @@ Accepted Google Drive authentication / qualification capabilities:
 - ephemeral `127.0.0.1` callback port;
 - exact OAuth scope `https://www.googleapis.com/auth/drive.readonly`;
 - OAuth client configuration supplied only from local `RELAY_GDRIVE_OAUTH_CLIENT_FILE`;
-- access/refresh credentials remain in process memory only and are not serialized by Relay;
+- access tokens remain memory-only; refresh tokens are persisted only in current-user Windows DPAPI-protected storage;
+- OAuth client JSON remains local through `RELAY_GDRIVE_OAUTH_CLIENT_FILE` and outside Git;
 - `qualify-drive` validates one deliberately designated raw direct-child artifact;
 - qualification reuses exact-byte, provider-version, parent/state and project-identity consistency checks;
 - qualification creates no Watcher event, no Relay delivery state and performs no Drive mutation.
 
 Accepted authentication implementation commit:
-- `18d8d45c4ad505651f6ac4ef7f47165c0d068555` â€” ephemeral Drive OAuth and read-only qualification.
-- `eb3339a452badc14e9fb05668a96f128efbb03a2` â€” script-mode Drive/Auth error identity correction, verified with subprocess tests.
+- `18d8d45c4ad505651f6ac4ef7f47165c0d068555` - ephemeral Drive OAuth and read-only qualification.
+- `eb3339a452badc14e9fb05668a96f128efbb03a2` - script-mode Drive/Auth error identity correction, verified with subprocess tests.
 
 `RELAY.GDRIVE.AUTH.SESSION.1A` adds a Windows current-user DPAPI protected refresh-token session. The deterministic suite and real read-only qualification verify fresh-process refresh reuse without reopening the browser. The protected file contains only the refresh token payload; client/scope identity is hashed into its filename and bound as DPAPI entropy. `reset-drive-auth` removes only that local session.
 Implementation commit: `c479aa1488aacf470562a236090ae10d305d7ef8`.
 
-Deterministic validation:
+Final `RELAY.GDRIVE.AUTH.SESSION.1A` deterministic validation:
+- 51/51 unit tests passed;
+- Python compile checks passed;
+- fake Drive lifecycle CLI demo and core CLI demo passed;
+- `git diff --check` passed.
+
+Historical `RELAY.GDRIVE.AUTH.LIVE.1A` deterministic validation (before session persistence):
 - 42/42 unit tests passed, including subprocess checks for HTTP 403, missing OAuth client configuration, and successful qualification;
 - Python compile checks passed;
 - fake-Drive CLI lifecycle demo passed;

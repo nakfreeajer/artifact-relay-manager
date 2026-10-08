@@ -91,7 +91,7 @@ Post-correction validation:
 Session-specific coverage includes protected refresh-token persistence and fresh-process reuse, client/scope isolation, real Windows DPAPI round-trip, corrupt-session fail-closed behavior, refresh failure retention, refresh-token rotation, idempotent local reset, and `poll-drive` reuse across fresh processes.
 
 Final deterministic validation:
-- `python -m unittest discover -s tests -v` — 51 passed, 0 failed;
+- `python -m unittest discover -s tests -v` - 51/51 passed, 0 failed;
 - `python -m py_compile relay.py drive_adapter.py drive_auth.py drive_session.py tests/test_relay.py tests/cli_demo.py tests/test_drive_adapter.py tests/test_drive_auth.py tests/test_drive_session.py tests/gdrive_cli_demo.py` — passed;
 - `python tests/gdrive_cli_demo.py` — passed: first delivery, duplicate deduplication, pending delivery while Watcher is unavailable, and fresh invocation retry with the same event ID;
 - `python tests/cli_demo.py` — passed;
@@ -105,5 +105,3 @@ Real read-only session qualification:
 - no Watcher delivery or Drive mutation occurred.
 
 The OAuth client JSON and protected session location/content are intentionally excluded from tracked evidence. The real protected session remains in the current Windows user's local application data.
-
-The successful real qualification evidence above remains the accepted live result. A further live re-run was not practical during this correction because the local OAuth client environment setting/file was unavailable; no live credentials or Drive content were accessed.

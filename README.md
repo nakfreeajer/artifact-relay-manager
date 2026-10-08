@@ -45,7 +45,7 @@ One installation is intended to contain:
 - a local normalized event interface used by project Watchers;
 - simple local durable state for configuration, provider cursors, deduplication, delivery attempts, and health; add a database only if demonstrated runtime or scale evidence requires it.
 
-The OAuth session is currently ephemeral, so browser authorization is required for each authenticated qualification. A secure persistent session store, background service, and desktop UI are not implemented yet.
+Persistent Google Drive OAuth sessions are implemented on Windows. First authorization uses the system browser; later fresh processes refresh from the DPAPI-protected refresh token without opening the browser. A background service and desktop UI are not implemented yet.
 
 ## Multi-project model
 
