@@ -1,5 +1,20 @@
 # Validation
 
+## RELAY.PROJECT.REGISTRY.1A
+
+Registry-specific coverage proves absent-registry initialization, strict schema and duplicate-key rejection, metadata-only output, canonical paths, stable ordering, fresh-process persistence, enable/disable revalidation, safe remove semantics, project identity matching, and fail-closed collision handling for projectId/configPath/statePath/relayWorkspace/folderId. Atomic replacement failure preserves the prior valid registry. Side-effect tests block all `urllib.request.urlopen` calls and verify a protected-session sentinel remains unchanged.
+
+Local qualification used an ignored fixture config and explicit registry under `.agent-work/milestones/RELAY.PROJECT.REGISTRY.1A/evidence/`. Separate invocations of `add`, `list`, `show`, `validate`, `disable`, and `enable` all exited zero. The final registry contained exactly one enabled project and canonical absolute config/state paths. The endpoint was loopback and was not contacted; OAuth/browser configuration was absent from the isolated process environment. The protected OAuth session was not read, reset, or modified. Sanitized command results are in the ignored `evidence/qualification.json` file.
+
+Final deterministic validation:
+- `python -m unittest discover -s tests -v` — 82 passed, 0 failed;
+- `python -m py_compile project_registry.py relay_projects.py tests/test_project_registry.py` — passed;
+- `python tests/gdrive_cli_demo.py` — passed;
+- `python tests/cli_demo.py` — passed;
+- `git diff --check` — passed.
+
+Registry CLI shape: `python relay_projects.py [--registry <path>] list|add|show|enable|disable|remove|validate`. The default registry is `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`. It stores schemaVersion 1 and project metadata plus canonical references to existing config/state files. No registry supervisor, Windows Service, UI, database, Drive Changes cursor, outbound publishing, provider framework, or Orchestrator authority was added. The foreground single-project monitor remains the only monitor runtime.
+
 Accepted Relay core coverage includes:
 - valid project identity;
 - project/repository identity mismatch fails closed;

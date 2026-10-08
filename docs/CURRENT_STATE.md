@@ -4,6 +4,8 @@ Project: `artifact-relay-manager`
 
 Status: `RELAY.GDRIVE.MONITOR.LOOP.1A` is implemented on branch `gdrive-monitor-loop-1a`; it is not merged to `main`.
 
+`RELAY.PROJECT.REGISTRY.1A` adds a local schemaVersion 1 JSON registry at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` by default. Entries reference existing per-project Drive config and Relay state paths rather than duplicating configuration. Writes use a same-directory temporary file, flush/fsync, and atomic replace. Validation rejects project ID, canonical config/state path, configured workspace, and Drive folder collisions. `relay_projects.py` provides list/add/show/enable/disable/remove/validate operations. Registry operations validate local configuration and have no Drive, Watcher, OAuth/browser, or protected-session side effects. No supervisor consumes the registry yet; foreground single-project `monitor-drive` remains the only monitor runtime.
+
 Accepted Relay core:
 - exact-byte SHA-256 and byte length;
 - deterministic normalized event identity;
@@ -87,6 +89,7 @@ Observed live prerequisite failure before PASS:
 - the script-mode correction was qualified locally with a deterministic fake Drive endpoint; the previously recorded real qualification result remains unchanged.
 
 Current limitations:
+- project registry is not yet consumed by a multi-project supervisor;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;
 - refresh failure is sanitized and keeps the existing session; recovery requires explicit operator action such as reset and browser reauthorization;

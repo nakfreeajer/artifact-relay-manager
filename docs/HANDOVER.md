@@ -13,6 +13,18 @@ This project deliberately omits project-Orchestrator internals.
 
 ## Accepted milestones
 
+### RELAY.PROJECT.REGISTRY.1A
+Implemented on branch `project-registry-1a`:
+- schemaVersion 1 local JSON registry at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` by default;
+- references existing Drive project config and Relay state paths, with canonical absolute paths and atomic replace;
+- rejects project ID, config path, state path, workspace, and Drive folder collisions;
+- `relay_projects.py` supports list/add/show/enable/disable/remove/validate;
+- validates the current local Drive config without Drive HTTP, Watcher, OAuth/browser, or protected-session access;
+- does not add a registry consumer; monitoring remains foreground and single-project.
+
+Source/tests commit: `6848633a69aba57b5b8f86596c5ccecce6d3c664`.
+Validation: 82/82 unit tests passed; changed Python files compiled; Drive and core CLI demos and `git diff --check` passed. Six-command local qualification passed in separate CLI processes. Evidence is in the ignored `.agent-work/milestones/RELAY.PROJECT.REGISTRY.1A/evidence/` directory.
+
 ### RELAY.CORE.VERTICAL.1A
 Accepted deterministic transport core:
 - exact-byte hashing;

@@ -1,5 +1,12 @@
 # Project History
 
+## 2026-10-08 — RELAY.PROJECT.REGISTRY.1A implementation
+
+Added a local durable project registry that references existing per-project Drive config and Relay state files. The schemaVersion 1 JSON registry uses canonical paths, deterministic projectId ordering, strict duplicate-key/schema checks, project/config identity checks, and collision checks for project IDs, config/state paths, Relay workspaces, and Drive folders. Writes use a same-directory temporary file followed by flush/fsync and atomic replacement. The `relay_projects.py` CLI supports list/add/show/enable/disable/remove/validate and returns metadata-only JSON. Registry operations do not call Drive, Watcher, browser OAuth, or protected-session APIs. No supervisor consumes the registry yet.
+
+Source/tests commit: `6848633a69aba57b5b8f86596c5ccecce6d3c664`.
+Validation: 82/82 unit tests passed; Python compile checks, both existing CLI demos, and `git diff --check` passed. Six CLI operations passed in fresh processes during ignored local qualification.
+
 ## 2026-10-08 — RELAY.GDRIVE.MONITOR.LOOP.1A implementation
 
 Added the foreground single-project Google Drive monitor loop:

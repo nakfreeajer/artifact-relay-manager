@@ -16,7 +16,10 @@ Current accepted capabilities include:
 - installed-app Google OAuth using the system browser, an ephemeral loopback callback, and exactly `drive.readonly`;
 - Windows DPAPI-protected refresh-token session reuse across fresh processes, with local reset support;
 - foreground single-project `monitor-drive` loop with bounded polling, in-memory access-token reuse, 401 recovery, degraded-cycle backoff, and pending transport retry;
+- local schema-versioned project registry that references existing Drive config and Relay state files, with atomic JSON updates and collision validation;
 - bounded real-Drive read-only qualification of one explicitly designated raw artifact without Watcher delivery or Relay state.
+
+The registry is stored by default at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`. Manage it with `python relay_projects.py [--registry <path>] list|add|show|enable|disable|remove|validate`. It stores only project metadata and canonical config/state paths; it does not copy project configuration or credentials. Registry operations validate local files and make no Drive, Watcher, browser OAuth, or protected-session calls. The registry is not consumed by a supervisor yet; `monitor-drive` remains a foreground single-project runtime.
 
 A real Google Drive read-only qualification passed on 2026-10-08 against one explicitly configured test folder and designated 26-byte text artifact. The observed Drive version was `3` and the exact-byte SHA-256 was `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 
