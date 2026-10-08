@@ -13,10 +13,22 @@ Validation results:
 - `python -m unittest discover -s tests -v` — 100 passed, 0 failed;
 - `python -m py_compile project_supervisor.py relay_windows_service.py tests/test_relay_windows_service.py` — passed;
 - `git diff --check` — passed.
+- qualification-closure regressions after installing pywin32: service lifecycle 3/3, Project Supervisor 15/15, and Drive session 8/8; all 26 passed;
+- qualification-closure compile checks for service, supervisor and DPAPI session modules/tests — passed; `git diff --check` — passed.
 
-Actual Windows SCM qualification is `BLOCKED=pywin32_not_installed`. `pywin32` was absent from the current Python environment. No service was installed or started. Install the optional dependency from `requirements-windows-service.txt`, then configure the service to run as the Windows account that owns the DPAPI session and provide `RELAY_GDRIVE_OAUTH_CLIENT_FILE` to its process. The adapter validates the protected session before invoking supervisor cycles and fails closed on unavailable credentials, including current-user DPAPI identity mismatch. No OAuth session was reset and no Google Drive content was modified.
+Actual Windows SCM qualification is `BLOCKED=scm_create_service_access_denied`. Environment checks on 2026-10-09:
+- interpreter: `C:\Python314\python.exe`, Python `3.14.4`; pip `26.0.1`;
+- `pywin32` `312` was installed with `python -m pip install --user "pywin32>=306"` into this interpreter's user site and imports successfully;
+- current process identity is a standard, non-elevated Windows user; direct `OpenSCManager(..., SC_MANAGER_CREATE_SERVICE)` returned Access Denied (Win32 error `5`);
+- pywin32's standard service installation leaves `lpServiceStartName` unset; Windows then assigns LocalSystem. That identity is incompatible with the current-user DPAPI session; qualification requires explicitly configuring the DPAPI-owning user SID;
+- no `ArtifactRelayManager` service exists; no service creation was attempted;
+- the previously approved local OAuth client file exists, but `RELAY_GDRIVE_OAUTH_CLIENT_FILE` is unset in the current process;
+- `DriveAuthSession()` successfully decrypted the existing protected session under the current interactive user identity; this constructor-only check did not refresh an access token or make a network request;
+- `%LOCALAPPDATA%` exists, but the default `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` registry is absent.
 
-Limitations: service deployment/account configuration and actual SCM lifecycle remain unqualified; interactive browser authorization is intentionally unavailable in service mode. No desktop UI, service management API, scheduler, database, provider framework, or project-Orchestrator workflow authority was added.
+No service account or project registry was created because SCM create permission is unavailable. The required service account is the same Windows user SID that owns the current-user DPAPI session; no SCM service account is currently configured. The noninteractive process must have `RELAY_GDRIVE_OAUTH_CLIENT_FILE` set to the existing Desktop client file, use that service identity's `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`, and run with the interpreter containing pywin32. pywin32 registers its Python service host; SCM's working directory is not configured by this adapter and normally defaults to the system service directory. Project config and state paths are canonical absolute paths, but module import and runtime behavior from that SCM working directory remain unqualified. A different DPAPI identity or missing configuration fails closed before monitoring. The approved existing Artifact Relay Manager test project, Drive artifacts, and Relay state were not touched. No service was installed or started, no browser was launched, the protected OAuth session was not reset or refreshed, and Google Drive was not modified.
+
+Limitations: actual SCM process startup, supervisor operation under SCM, graceful SCM stop, and on-disk state preservation remain unqualified because service creation is denied to this non-elevated process. Interactive browser authorization is intentionally unavailable in service mode. No desktop UI, service management API, scheduler, database, provider framework, or project-Orchestrator workflow authority was added.
 
 ## RELAY.PROJECT.SUPERVISOR.1A
 
@@ -34,7 +46,7 @@ Final deterministic validation:
 - `python tests/supervisor_cli_demo.py` — passed;
 - `git diff --check` — passed.
 
-Supervisor command: `python relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]`. It uses one process and sequential project execution. Windows Service/background startup, desktop UI, service management API, database, Drive Changes cursor, outbound publishing, multi-provider framework, scheduler/workflow engine, and project-Orchestrator authority are not implemented.
+Supervisor command: `python relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]`. It uses one process and sequential project execution. The Windows Service host is on `windows-service-1a`; actual SCM qualification remains blocked as documented above. Desktop UI, service management API, database, Drive Changes cursor, outbound publishing, multi-provider framework, scheduler/workflow engine, and project-Orchestrator authority are not implemented.
 
 ## RELAY.PROJECT.REGISTRY.1A
 

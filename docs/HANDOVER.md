@@ -19,9 +19,9 @@ Implemented on branch `windows-service-1a`:
 - service startup validates and refreshes an existing current-user DPAPI session before monitoring, then reuses that single session for all cycles; browser OAuth is not available in service startup;
 - SCM stop signals wake the supervisor and stop it cleanly between cycles;
 - deterministic tests cover clean start/stop with the existing supervisor, missing OAuth credentials, and simulated DPAPI failure under an incompatible service identity;
-- actual Windows SCM qualification was not run because pywin32 is absent in this environment; no service was installed.
+- `pywin32` 312 was installed into the same Python 3.14.4 user environment; actual SCM qualification remains blocked because the non-elevated process receives Access Denied (Win32 error 5) when requesting `SC_MANAGER_CREATE_SERVICE`. No service was installed.
 
-Install the optional host dependency with `python -m pip install -r requirements-windows-service.txt`. Configure the Windows service to run under the account that owns the protected Drive session and make `RELAY_GDRIVE_OAUTH_CLIENT_FILE` available to that service process. An incompatible account or unavailable session fails closed before project cycles.
+Install the optional host dependency with `python -m pip install -r requirements-windows-service.txt`. pywin32's standard install command leaves the service account unspecified, which Windows runs as LocalSystem; that identity cannot use a current-user DPAPI session. Configure the Windows service to run under the account that owns the protected Drive session and make `RELAY_GDRIVE_OAUTH_CLIENT_FILE` available to that service process. The default registry is `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` for the service identity. SCM normally starts services with a system working directory; the adapter does not change it, and project config/state paths are canonical absolute paths. Actual service import behavior from SCM's working directory is not yet qualified. An incompatible account or unavailable session fails closed before project cycles.
 
 No desktop UI, management API, database, scheduler, provider framework, or project-Orchestrator workflow authority was added. No next milestone is selected here; stop for Architect review.
 

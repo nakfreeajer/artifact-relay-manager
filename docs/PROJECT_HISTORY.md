@@ -4,7 +4,7 @@
 
 Added a minimal optional pywin32 Windows Service adapter around the existing foreground Project Supervisor. Service startup validates and refreshes an existing current-user DPAPI Drive session without browser fallback, then supplies that same session to the supervisor. SCM stop requests wake the supervisor between cycles for graceful shutdown. The foreground CLI and monitor-cycle implementation remain the shared runtime path.
 
-Deterministic lifecycle tests passed for supervisor reuse and clean start/stop, absent OAuth credentials, and a simulated DPAPI failure under an incompatible Windows identity. Full regression validation passed 100/100 tests. Python compile checks and `git diff --check` passed. Actual SCM install/start/stop qualification is blocked because `pywin32` is not installed in the available environment; no service was installed and no OAuth credential or Drive data was modified.
+Deterministic lifecycle tests passed for supervisor reuse and clean start/stop, absent protected credentials, and a simulated DPAPI failure under an incompatible Windows identity. Full regression validation passed 100/100 tests. Python compile checks and `git diff --check` passed. `pywin32` 312 is installed in the same Python 3.14.4 user environment. Actual SCM install/start/stop qualification is blocked because the non-elevated process receives Access Denied (Win32 error 5) when requesting service-creation access. No service was installed, no protected OAuth session was reset, and no Drive data was modified.
 
 ## 2026-10-08 — RELAY.PROJECT.SUPERVISOR.1A implementation
 
