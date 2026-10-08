@@ -230,6 +230,51 @@ def _verify_artifact_snapshot(client: DriveClient, listed: dict, config: dict) -
         raise DriveError("Drive artifact changed during media download")
 
 
+def qualify_drive(config_path: Path, qualification_file_id: str, token: str,
+                  api_base_url: str | None = None) -> dict:
+    """Read and qualify one explicitly designated raw artifact without staging or delivery."""
+    config = _load_drive_config(config_path)
+    if not isinstance(qualification_file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", qualification_file_id):
+        raise DriveError("invalid qualification file ID")
+    client = DriveClient(token, api_base_url)
+    identity_snapshot = _identity(client, config)
+    matches = [item for item in client.list_children(config["folderId"])
+               if item.get("id") == qualification_file_id]
+    if len(matches) != 1:
+        raise DriveError("qualification file must be a direct child of the configured Drive root")
+    item = matches[0]
+    parents = item.get("parents")
+    if (item.get("trashed") is not False or not isinstance(parents, list)
+            or config["folderId"] not in parents):
+        raise DriveError("qualification file is not an active direct child of the configured root")
+    mime = item.get("mimeType")
+    if (not isinstance(mime, str) or mime == FOLDER_MIME
+            or mime.startswith("application/vnd.google-apps.")):
+        raise DriveError("qualification file must be a raw non-folder file")
+    if not isinstance(item.get("capabilities"), dict) or item["capabilities"].get("canDownload") is not True:
+        raise DriveError("qualification file is not downloadable")
+    version = item.get("version")
+    size = item.get("size")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+", version):
+        raise DriveError("qualification file has invalid version metadata")
+    if not isinstance(size, str) or not size.isdigit():
+        raise DriveError("qualification file has invalid size metadata")
+    if int(size) > relay.MAX_BYTES:
+        raise DriveError("qualification file exceeds the 1 MiB limit")
+    data = client.media(qualification_file_id, relay.MAX_BYTES)
+    if len(data) != int(size):
+        raise DriveError("qualification media length does not match metadata")
+    _verify_artifact_snapshot(client, item, config)
+    if _identity(client, config) != identity_snapshot:
+        raise DriveError("Drive project identity changed during qualification")
+    return {
+        "projectId": config["projectId"], "folderId": config["folderId"],
+        "qualificationFileId": qualification_file_id, "version": version,
+        "byteLength": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+        "mimeType": mime, "result": "QUALIFIED_READ_ONLY",
+    }
+
+
 def _stage_path(config: dict, file_id: str, version: str) -> Path:
     workspace = config["_workspace"]
     project_key = hashlib.sha256(config["projectId"].encode()).hexdigest()

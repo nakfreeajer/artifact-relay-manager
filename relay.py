@@ -97,8 +97,9 @@ def status(sp):
  for r in s["events"].values():o[r["status"]]+=1
  return o
 def main():
- p=argparse.ArgumentParser();p.add_argument("--config",type=Path,required=True);p.add_argument("--state",type=Path,required=True);sub=p.add_subparsers(dest="cmd",required=True);q=sub.add_parser("process");q.add_argument("fixture",type=Path);sub.add_parser("retry");sub.add_parser("status");drive=sub.add_parser("poll-drive");drive.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument("--config",type=Path,required=True);p.add_argument("--state",type=Path);sub=p.add_subparsers(dest="cmd",required=True);q=sub.add_parser("process");q.add_argument("fixture",type=Path);sub.add_parser("retry");sub.add_parser("status");drive=sub.add_parser("poll-drive");drive.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");qualify=sub.add_parser("qualify-drive");qualify.add_argument("--qualification-file-id",required=True);qualify.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");a=p.parse_args()
  try:
+  if a.cmd != "qualify-drive" and a.state is None: raise RelayError("--state is required for this command")
   if a.cmd=="process":
    eid,r=process(a.config,a.state,a.fixture);print(json.dumps({"eventId":eid,"result":r},sort_keys=True));return 0 if r!="pending" else 2
   if a.cmd=="retry":
@@ -106,6 +107,10 @@ def main():
   if a.cmd=="poll-drive":
    import drive_adapter
    out=drive_adapter.poll_drive(a.config,a.state,api_base_url=a.api_base_url);print(json.dumps(out,sort_keys=True));return 0
+  if a.cmd=="qualify-drive":
+   import drive_adapter, drive_auth
+   token=drive_auth.get_access_token()
+   out=drive_adapter.qualify_drive(a.config,a.qualification_file_id,token,api_base_url=a.api_base_url);print(json.dumps(out,sort_keys=True));return 0
   print(json.dumps(status(a.state),sort_keys=True));return 0
  except RelayError as e: print("relay error: "+str(e),file=__import__("sys").stderr);return 1
 if __name__=="__main__":raise SystemExit(main())

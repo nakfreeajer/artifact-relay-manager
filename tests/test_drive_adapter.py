@@ -94,6 +94,7 @@ class DriveAdapterTests(unittest.TestCase):
         }
         DriveHandler.identity_ids = ["identity"]
         DriveHandler.identity_bytes = self.identity("project-1", "example/repo")
+        DriveHandler.auth_expected = "test-token"
         DriveHandler.fail = False
         DriveHandler.calls = []
         DriveHandler.after_media = None
@@ -238,6 +239,69 @@ class DriveAdapterTests(unittest.TestCase):
 
     def test_test_api_override_rejects_remote_host(self):
         with self.assertRaises(drive_adapter.DriveError): drive_adapter.DriveClient("test-token", "https://example.com")
+
+    def test_read_only_qualification_hashes_designated_exact_raw_bytes_without_event_state(self):
+        result = drive_adapter.qualify_drive(self.config_path, "artifact-1", "test-token", self.api_base)
+        self.assertEqual(result, {
+            "projectId": "project-1", "folderId": self.folder, "qualificationFileId": "artifact-1",
+            "version": "10", "byteLength": 7, "sha256": hashlib.sha256(b"caf\xc3\xa9\r\n").hexdigest(),
+            "mimeType": "application/octet-stream", "result": "QUALIFIED_READ_ONLY",
+        })
+        self.assertFalse(self.state_path.exists())
+        self.assertFalse(WatcherHandler.events)
+        self.assertFalse((self.workspace / "staged").exists())
+
+    def test_qualification_rejects_outside_folder_and_invalid_designated_items(self):
+        DriveHandler.files["outside"] = {"id": "outside", "name": "outside", "mimeType": "application/octet-stream", "parents": ["elsewhere"], "trashed": False, "version": "1", "size": "1", "capabilities": {"canDownload": True}, "data": b"x"}
+        with self.assertRaises(drive_adapter.DriveError):
+            drive_adapter.qualify_drive(self.config_path, "outside", "test-token", self.api_base)
+        cases = (
+            ("folder", {"mimeType": drive_adapter.FOLDER_MIME}),
+            ("native", {"mimeType": "application/vnd.google-apps.document"}),
+            ("trashed", {"trashed": True}),
+            ("not-downloadable", {"capabilities": {"canDownload": False}}),
+            ("oversized", {"size": str(relay.MAX_BYTES + 1)}),
+        )
+        for name, changes in cases:
+            with self.subTest(name=name):
+                original = dict(DriveHandler.files["artifact-1"])
+                DriveHandler.files["artifact-1"].update(changes)
+                with self.assertRaises(drive_adapter.DriveError):
+                    drive_adapter.qualify_drive(self.config_path, "artifact-1", "test-token", self.api_base)
+                DriveHandler.files["artifact-1"] = original
+        self.assertFalse(WatcherHandler.events)
+        self.assertFalse(self.state_path.exists())
+
+    def test_qualification_rejects_artifact_version_and_project_identity_races(self):
+        DriveHandler.after_media = lambda file_id: DriveHandler.files[file_id].update(version="11")
+        with self.assertRaises(drive_adapter.DriveError):
+            drive_adapter.qualify_drive(self.config_path, "artifact-1", "test-token", self.api_base)
+        self.assertFalse(WatcherHandler.events)
+        self.assertFalse(self.state_path.exists())
+        DriveHandler.files["artifact-1"]["version"] = "10"
+        DriveHandler.after_media = lambda _file_id: setattr(DriveHandler, "identity_bytes", self.identity("other-project", "example/repo"))
+        with self.assertRaises(drive_adapter.DriveError):
+            drive_adapter.qualify_drive(self.config_path, "artifact-1", "test-token", self.api_base)
+        DriveHandler.after_media = None
+        self.assertFalse(WatcherHandler.events)
+        self.assertFalse(self.state_path.exists())
+
+    def test_qualification_cli_outputs_metadata_only_and_uses_ephemeral_token(self):
+        from contextlib import redirect_stdout
+        import io
+
+        output = io.StringIO()
+        args = ["relay.py", "--config", str(self.config_path), "qualify-drive", "--qualification-file-id", "artifact-1", "--api-base-url", self.api_base]
+        DriveHandler.auth_expected = "access-token-secret"
+        with patch("sys.argv", args), patch("drive_auth.get_access_token", return_value="access-token-secret"), redirect_stdout(output):
+            self.assertEqual(relay.main(), 0)
+        rendered = output.getvalue()
+        payload = json.loads(rendered)
+        self.assertEqual(payload["result"], "QUALIFIED_READ_ONLY")
+        self.assertNotIn("access-token-secret", rendered)
+        self.assertNotIn("caf\u00e9", rendered)
+        self.assertFalse(self.state_path.exists())
+        self.assertFalse(WatcherHandler.events)
 
     def test_outside_root_never_processed_and_trashed_ignored(self):
         DriveHandler.files["outside"] = {"id": "outside", "name": "outside", "mimeType": "application/octet-stream", "parents": ["other-folder"], "trashed": False, "version": "4", "size": "7", "capabilities": {"canDownload": True}, "data": b"outside"}
