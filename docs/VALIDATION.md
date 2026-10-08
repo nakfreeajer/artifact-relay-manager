@@ -51,7 +51,7 @@ Accepted Google Drive OAuth / qualification coverage includes:
 - missing dependency/client file fails safely;
 - web-client config and duplicate OAuth JSON keys fail closed;
 - auth failure text is sanitized;
-- access/refresh credential material is not printed or persisted by Relay;
+- access tokens and client secrets are not printed or persisted; the refresh token is stored only in current-user Windows DPAPI-protected storage;
 - valid designated raw artifact returns exact metadata/hash only;
 - outside-root/native/folder/trashed/not-downloadable/oversized designated items fail closed;
 - provider-version and project-identity races fail closed;
@@ -105,3 +105,22 @@ Real read-only session qualification:
 - no Watcher delivery or Drive mutation occurred.
 
 The OAuth client JSON and protected session location/content are intentionally excluded from tracked evidence. The real protected session remains in the current Windows user's local application data.
+
+## RELAY.GDRIVE.MONITOR.LOOP.1A
+
+Monitor coverage includes: missing protected session fails safely without browser flow; protected-session startup refreshes once; valid access token is reused across cycles; expiry refreshes once; rotated refresh token updates the DPAPI store; structured HTTP 401 invalidates/refreshes and retries one cycle exactly once; repeated 401/provider failures produce degraded results with bounded backoff and recovery resets backoff; project identity mismatch does not trigger local pending retries; pending events retry after the source disappears from Drive with the same event ID; unchanged versions remain deduplicated; and Ctrl+C preserves state/session while emitting `STOPPED`.
+
+Final validation:
+- `python -m unittest discover -s tests -v` — 62 passed, 0 failed (including all 51 previous tests);
+- `python -m py_compile relay.py drive_adapter.py drive_auth.py drive_monitor.py tests/test_drive_monitor.py` — passed;
+- `python tests/gdrive_cli_demo.py` — passed;
+- `python tests/cli_demo.py` — passed;
+- `git diff --check` — passed.
+
+Live monitor qualification:
+- command ran exactly 2 cycles with `--interval-seconds 1 --max-cycles 2`;
+- both cycles returned `OK`; cycle 1 delivered one event and cycle 2 deduplicated it;
+- the designated file remained version `3`, MIME `text/plain`, byte length `26`, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`;
+- one stable event ID was present for the designated file/version and the local mock Watcher received it once;
+- the monitor reused the existing protected session, emitted no authorization prompt, and did not open browser OAuth;
+- Drive requests were read-only; no Drive content was created, modified, renamed, moved, or deleted.

@@ -78,6 +78,22 @@ Final deterministic validation: 51/51 tests passed; compile checks, both CLI dem
 
 Deterministic validation and bounded evidence are recorded in `docs/VALIDATION.md` and `.agent-work/milestones/RELAY.GDRIVE.AUTH.SESSION.1A/evidence/`.
 
+### RELAY.GDRIVE.MONITOR.LOOP.1A
+Implemented on branch `gdrive-monitor-loop-1a`:
+Source/tests commit: `d3d6ba38d02c03a609ca5a62cd9fd8eaac41c303`.
+- `monitor-drive` is a foreground single-project loop; `--state` is required, `--interval-seconds` is bounded to 1-3600, and optional `--max-cycles` is bounded to 1-10000;
+- monitor startup requires an existing current-user DPAPI session and never launches browser OAuth;
+- the access token is reused in memory across cycles; credentials refresh only when invalid/expired or after one HTTP 401, with exactly one poll retry for a 401;
+- each successfully completed Drive poll performs final project identity validation before local pending events are retried; events attempted in that same cycle are excluded from the local retry pass;
+- degraded provider/auth cycles emit sanitized metadata and use bounded backoff; successful cycles reset the backoff;
+- Ctrl+C emits `STOPPED` without deleting Relay state or the protected session;
+- source-removal retry was proven against a deterministic local Drive server and delivered the same pending event ID;
+- live two-cycle qualification reused the existing session with no browser prompt, delivered once, and deduplicated the unchanged file/version on cycle 2.
+
+Final validation: 62/62 tests passed; compile checks, both existing CLI demos, monitor tests, and `git diff --check` passed.
+
+Limitations: one project per process; full direct-child polling without a Drive Changes cursor; foreground process only; no Windows Service/background startup, UI, outbound publishing, multi-provider framework, database, or project-Orchestrator authority.
+
 ## Fresh worktree bootstrap
 From the repository root:
 
@@ -93,7 +109,7 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 
 ## Handover boundary
 
-RELAY.GDRIVE.AUTH.SESSION.1A completes persistent Windows Google OAuth session reuse. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
+RELAY.GDRIVE.MONITOR.LOOP.1A completes foreground Windows Google Drive monitoring. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
 
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.

@@ -15,6 +15,7 @@ Current accepted capabilities include:
 - exact raw-file staging with provider-version revalidation before Watcher delivery;
 - installed-app Google OAuth using the system browser, an ephemeral loopback callback, and exactly `drive.readonly`;
 - Windows DPAPI-protected refresh-token session reuse across fresh processes, with local reset support;
+- foreground single-project `monitor-drive` loop with bounded polling, in-memory access-token reuse, 401 recovery, degraded-cycle backoff, and pending transport retry;
 - bounded real-Drive read-only qualification of one explicitly designated raw artifact without Watcher delivery or Relay state.
 
 A real Google Drive read-only qualification passed on 2026-10-08 against one explicitly configured test folder and designated 26-byte text artifact. The observed Drive version was `3` and the exact-byte SHA-256 was `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
@@ -45,7 +46,7 @@ One installation is intended to contain:
 - a local normalized event interface used by project Watchers;
 - simple local durable state for configuration, provider cursors, deduplication, delivery attempts, and health; add a database only if demonstrated runtime or scale evidence requires it.
 
-Persistent Google Drive OAuth sessions are implemented on Windows. First authorization uses the system browser; later fresh processes refresh from the DPAPI-protected refresh token without opening the browser. A background service and desktop UI are not implemented yet.
+Persistent Google Drive OAuth sessions are implemented on Windows. First authorization uses the system browser; later fresh processes refresh from the DPAPI-protected refresh token without opening the browser. `monitor-drive` runs in the foreground only and requires an existing protected session. Windows Service installation/background startup and desktop UI are not implemented.
 
 ## Multi-project model
 

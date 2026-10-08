@@ -1,5 +1,16 @@
 # Project History
 
+## 2026-10-08 — RELAY.GDRIVE.MONITOR.LOOP.1A implementation
+
+Added the foreground single-project Google Drive monitor loop:
+- protected-session-only noninteractive startup; in-memory access-token reuse and refresh-token rotation through current-user DPAPI storage;
+- structured HTTP errors and one bounded 401 refresh/retry per poll cycle;
+- successful-cycle local retry for pending Relay deliveries after final Drive identity validation, excluding events attempted in that cycle;
+- metadata-only cycle reporting, bounded degraded-cycle backoff, and graceful Ctrl+C stop;
+- no Windows Service/background startup, UI, database, Changes cursor, outbound publishing, multi-project manager, provider framework or Orchestrator authority.
+
+Validation: 62/62 tests passed; Python compile checks, both existing CLI demos, and `git diff --check` passed. The live two-cycle monitor used the existing session without browser OAuth, delivered one event, then deduplicated the unchanged file/version. A local Drive test also confirmed a pending event retries with the same identity after its source disappears.
+
 ## 2026-10-08 — RELAY.GDRIVE.AUTH.SESSION.1A implementation
 
 Added the bounded Windows protected Google Drive OAuth session:

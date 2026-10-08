@@ -2,7 +2,7 @@
 
 Project: `artifact-relay-manager`
 
-Status: `RELAY.GDRIVE.AUTH.SESSION.1A` is implemented on branch `gdrive-auth-session-1a`; it is not merged to `main`.
+Status: `RELAY.GDRIVE.MONITOR.LOOP.1A` is implemented on branch `gdrive-monitor-loop-1a`; it is not merged to `main`.
 
 Accepted Relay core:
 - exact-byte SHA-256 and byte length;
@@ -45,6 +45,19 @@ Accepted authentication implementation commit:
 `RELAY.GDRIVE.AUTH.SESSION.1A` adds a Windows current-user DPAPI protected refresh-token session. The deterministic suite and real read-only qualification verify fresh-process refresh reuse without reopening the browser. The protected file contains only the refresh token payload; client/scope identity is hashed into its filename and bound as DPAPI entropy. `reset-drive-auth` removes only that local session.
 Implementation commit: `c479aa1488aacf470562a236090ae10d305d7ef8`.
 
+`RELAY.GDRIVE.MONITOR.LOOP.1A` adds the foreground `monitor-drive` command for one configured project. It reuses the protected refresh token without browser launch, keeps the access token in memory across cycles, retries one cycle once after structured HTTP 401, and retries previously pending local transport events only after a successful Drive poll and identity validation. A bounded deterministic backoff handles degraded cycles. Ctrl+C returns a clean `STOPPED` record.
+
+Source/tests commit: `d3d6ba38d02c03a609ca5a62cd9fd8eaac41c303`.
+
+Final deterministic validation:
+- 62/62 unit tests passed, including all previous 51 regressions;
+- Python compile checks passed;
+- fake Drive and core CLI lifecycle demos passed;
+- monitor tests cover noninteractive startup, access-token reuse/expiry, one-time 401 recovery, backoff, source-removal retry with the same event ID, identity-mismatch isolation, deduplication, and graceful stop;
+- `git diff --check` passed.
+
+Bounded live monitor qualification completed two cycles using the existing protected session and a local mock Watcher. The designated raw file was version `3`, 26 bytes, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`. Cycle 1 delivered one event; cycle 2 deduplicated it. The state retained one stable event identity and the mock Watcher received that event once. No browser authorization prompt appeared, and the monitor made no Drive mutation.
+
 Final `RELAY.GDRIVE.AUTH.SESSION.1A` deterministic validation:
 - 51/51 unit tests passed;
 - Python compile checks passed;
@@ -78,15 +91,15 @@ Current limitations:
 - reset removes the local token but does not revoke authorization at Google;
 - refresh failure is sanitized and keeps the existing session; recovery requires explicit operator action such as reset and browser reauthorization;
 - `poll-drive` still retains the existing manual `RELAY_GDRIVE_ACCESS_TOKEN` path;
-- no background poll loop or scheduler;
-- no Drive Changes cursor;
+- no Windows Service or background startup; `monitor-drive` is foreground only;
+- no scheduler or Drive Changes cursor;
 - no desktop UI;
 - no outbound Drive publishing;
 - no recursive/Drive-wide discovery;
 - no native Workspace export;
 - no multi-provider framework;
+- one project per monitor process;
+- no database;
 - no project-Orchestrator workflow authority.
 
-Next engineering direction:
-- preserve the bounded Windows protected-session behavior while addressing future platform support only in a separately scoped milestone;
-- keep scheduler, UI, outbound publishing and provider expansion out of scope until separately authorized.
+No next implementation milestone is selected here; the Architect chooses the next bounded target before Executor work resumes.
