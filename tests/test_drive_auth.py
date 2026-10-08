@@ -8,6 +8,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 import drive_auth
+import drive_session
+
+
+class FakeProtector:
+    def protect(self, plaintext, entropy):
+        key = __import__("hashlib").sha256(entropy).digest()
+        return b"TESTPROTECTED1" + bytes(value ^ key[index % len(key)] for index, value in enumerate(plaintext))
+
+    def unprotect(self, ciphertext, entropy):
+        prefix = b"TESTPROTECTED1"
+        if not ciphertext.startswith(prefix):
+            raise ValueError("invalid protected test payload")
+        key = __import__("hashlib").sha256(entropy).digest()
+        payload = ciphertext[len(prefix):]
+        return bytes(value ^ key[index % len(key)] for index, value in enumerate(payload))
 
 
 class FakeCredentials:
@@ -37,15 +52,22 @@ class FakeFlow:
 class DriveAuthTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.client_file = Path(self.temp.name) / "client.json"
+        self.client_dir = Path(self.temp.name) / "oauth-client"
+        self.client_dir.mkdir()
+        self.client_file = self.client_dir / "client.json"
+        self.appdata = Path(self.temp.name) / "appdata"
         self.client_file.write_text('{"installed":{"client_id":"test","client_secret":"secret","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"}}', encoding="utf-8")
         FakeFlow.calls = []
         FakeFlow.error = None
-        self.env = patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(self.client_file)})
+        FakeFlow.credentials = FakeCredentials()
+        self.env = patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(self.client_file), "LOCALAPPDATA": str(self.appdata)})
         self.env.start()
+        self.protector_factory = patch.object(drive_session, "PROTECTOR_FACTORY", FakeProtector)
+        self.protector_factory.start()
 
     def tearDown(self):
         self.env.stop()
+        self.protector_factory.stop()
         self.temp.cleanup()
 
     def test_installed_flow_uses_exact_scope_system_browser_and_ephemeral_loopback(self):
@@ -56,6 +78,8 @@ class DriveAuthTests(unittest.TestCase):
         self.assertEqual(FakeFlow.calls[1]["host"], "127.0.0.1")
         self.assertEqual(FakeFlow.calls[1]["port"], 0)
         self.assertTrue(FakeFlow.calls[1]["open_browser"])
+        self.assertEqual(FakeFlow.calls[1]["access_type"], "offline")
+        self.assertEqual(FakeFlow.calls[1]["prompt"], "consent")
         self.assertEqual(FakeFlow.calls[2]["oauthLogLevel"], logging.CRITICAL)
         self.assertEqual(logging.getLogger("google_auth_oauthlib.flow").level, previous_level)
 
@@ -93,6 +117,17 @@ class DriveAuthTests(unittest.TestCase):
         self.assertNotIn("authorization_code_secret", str(caught.exception))
         self.assertNotIn("access-token-secret", str(caught.exception))
 
+    def test_missing_refresh_token_does_not_claim_persistent_session_success(self):
+        class NoRefreshCredentials:
+            valid = True
+            token = "access-token-secret"
+            refresh_token = None
+
+        FakeFlow.credentials = NoRefreshCredentials()
+        with self.assertRaisesRegex(drive_auth.DriveAuthError, "did not provide a persistent refresh token"):
+            drive_auth.get_access_token(flow_class=FakeFlow)
+        self.assertEqual(list(self.appdata.rglob("*.dpapi")), [])
+
     def test_token_is_returned_only_to_caller_and_never_written_or_printed(self):
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -104,6 +139,11 @@ class DriveAuthTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertNotIn("access-token-secret", stdout.getvalue() + stderr.getvalue())
         self.assertNotIn("refresh-token-secret", stdout.getvalue() + stderr.getvalue())
+        session_files = list(self.appdata.rglob("*.dpapi"))
+        self.assertEqual(len(session_files), 1)
+        protected = session_files[0].read_bytes()
+        for secret in (b"access-token-secret", b"refresh-token-secret", b"client_secret", b"authorization-code"):
+            self.assertNotIn(secret, protected)
 
 
 if __name__ == "__main__":

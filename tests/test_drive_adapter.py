@@ -133,10 +133,25 @@ class DriveAdapterTests(unittest.TestCase):
             bootstrap = self.root / "subprocess-bootstrap"
             bootstrap.mkdir(exist_ok=True)
             (bootstrap / "sitecustomize.py").write_text(
-                "import sys, types\n"
+                "import hashlib, sys, types\n"
+                "import drive_session\n"
+                "class _Protector:\n"
+                "    prefix = b'TESTPROTECTED1'\n"
+                "    def protect(self, plaintext, entropy):\n"
+                "        key = hashlib.sha256(entropy).digest()\n"
+                "        return self.prefix + bytes(v ^ key[i % len(key)] for i, v in enumerate(plaintext))\n"
+                "    def unprotect(self, ciphertext, entropy):\n"
+                "        if not ciphertext.startswith(self.prefix): raise ValueError('invalid test ciphertext')\n"
+                "        key = hashlib.sha256(entropy).digest(); payload = ciphertext[len(self.prefix):]\n"
+                "        return bytes(v ^ key[i % len(key)] for i, v in enumerate(payload))\n"
+                "drive_session.PROTECTOR_FACTORY = _Protector\n"
+                "google = types.ModuleType('google'); google.__path__ = []; sys.modules['google'] = google\n"
+                "auth = types.ModuleType('google.auth'); auth.__path__ = []; google.auth = auth; sys.modules['google.auth'] = auth\n"
+                "transport = types.ModuleType('google.auth.transport'); transport.__path__ = []; auth.transport = transport; sys.modules['google.auth.transport'] = transport\n"
+                "requests = types.ModuleType('google.auth.transport.requests'); requests.Request = type('Request', (), {}); transport.requests = requests; sys.modules['google.auth.transport.requests'] = requests\n"
                 "package = types.ModuleType('google_auth_oauthlib')\npackage.__path__ = []\n"
                 "flow_module = types.ModuleType('google_auth_oauthlib.flow')\n"
-                "class _Credentials:\n    valid = True\n    token = 'subprocess-token-secret'\n"
+                "class _Credentials:\n    valid = True\n    token = 'subprocess-token-secret'\n    refresh_token = 'subprocess-refresh-token-secret'\n"
                 "class _Flow:\n    def run_local_server(self, **kwargs): return _Credentials()\n"
                 "class _InstalledAppFlow:\n    @classmethod\n    def from_client_config(cls, config, scopes): return _Flow()\n"
                 "flow_module.InstalledAppFlow = _InstalledAppFlow\npackage.flow = flow_module\n"
@@ -147,6 +162,7 @@ class DriveAdapterTests(unittest.TestCase):
             client_file = self.root / "oauth-client.json"
             client_file.write_text(json.dumps({"installed": {"client_id": "test-client", "client_secret": "oauth-client-secret", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}), encoding="utf-8")
             env["RELAY_GDRIVE_OAUTH_CLIENT_FILE"] = str(client_file)
+            env["LOCALAPPDATA"] = str(self.root / "subprocess-local-appdata")
             env["PYTHONPATH"] = str(bootstrap) + os.pathsep + env.get("PYTHONPATH", "")
         if extra_env:
             env.update(extra_env)
