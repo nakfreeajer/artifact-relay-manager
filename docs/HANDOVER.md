@@ -11,14 +11,40 @@ Reusable Artifact Relay transport infrastructure.
 
 This project deliberately omits project-Orchestrator internals.
 
-## Accepted baseline
-Milestone `RELAY.CORE.VERTICAL.1A` is accepted on branch `relay-core-vertical-1a`.
+## Accepted milestones
 
-Accepted implementation commits:
+### RELAY.CORE.VERTICAL.1A
+Accepted deterministic transport core:
+- exact-byte hashing;
+- deterministic event identity;
+- fail-closed project isolation;
+- durable pre-delivery state;
+- acknowledgement handling;
+- duplicate suppression;
+- restart-safe retry;
+- semantic persisted-state validation.
+
+Accepted commits:
 - `e77b8105a8be26418165479ca4f92ea6be0c8a33`
 - `9b73f05e0919796093a327f220d4d6ea093eb783`
 
-The accepted core provides deterministic event identity, exact-byte hashing, project isolation, durable pre-delivery state, Watcher acknowledgement handling, duplicate suppression and restart-safe retry. Persisted events are semantically revalidated before retry.
+### RELAY.GDRIVE.INBOUND.1A
+Accepted bounded one-shot Google Drive inbound adapter:
+- one configured folder only;
+- raw identity file validation;
+- Drive file ID + File.version provider identity;
+- exact raw-byte staging;
+- post-download provider metadata consistency check;
+- final identity revalidation before Watcher delivery;
+- no Workspace export;
+- token only from environment.
+
+Accepted commits:
+- `a1557e9c87c72e76243f5cebf1b59c9875ff472f`
+- `23fa8b9142f798fa22de50ae4cfe8e1624576794`
+
+Deterministic validation: 29/29 tests passed.
+Live status: `LIVE_VALIDATION_BLOCKED=credentials_not_supplied`.
 
 ## Fresh worktree bootstrap
 From the repository root:
@@ -34,23 +60,14 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 ```
 
 ## Next bounded implementation target
-Add the real Google Drive inbound adapter around the accepted 1A core.
+Add the smallest secure Google Drive authentication/session bootstrap and perform the first real read-only qualification against one explicitly configured test folder.
 
-The next milestone should:
-- observe one explicitly configured Drive project folder;
-- validate the project identity artifact;
-- surface exact provider item identity and provider version/change identity;
-- download bounded artifact bytes exactly;
-- feed those facts into the accepted normalized-event/durable-delivery core;
-- preserve at-least-once Relay transport and fail-closed project isolation.
+Keep this bounded:
+- obtain/use a Drive access token without committing credentials;
+- support the existing one-shot adapter;
+- qualify folder metadata, identity read, direct-child listing and one deliberately designated small raw test artifact;
+- preserve exact-byte/version binding and zero Drive mutation.
 
-Do not redesign the accepted 1A transport core unless direct regression evidence proves a defect.
+Do not start the background poll loop, desktop UI, outbound publishing, multi-provider framework, Codex launch/relaunch, Architect rollover, scheduler/workflow engine, or a database in the same milestone.
 
-Still out of scope unless separately authorized:
-- desktop UI;
-- multi-provider framework;
-- Codex launch/relaunch authority;
-- Architect rollover;
-- scheduler/workflow engine;
-- product/workflow acceptance authority;
-- SQLite or another database without demonstrated need.
+Do not redesign accepted core/inbound behavior unless direct regression evidence proves a defect.

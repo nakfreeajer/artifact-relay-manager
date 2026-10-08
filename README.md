@@ -4,7 +4,17 @@ Reusable deterministic artifact transport for multi-project Architect / Watcher 
 
 ## Status
 
-Architecture bootstrap only. No project dispatch authority is implemented here.
+The deterministic Relay core and bounded one-shot Google Drive inbound adapter are implemented and accepted on feature branches. No project dispatch authority is implemented here.
+
+Current accepted capabilities include:
+- exact-byte SHA-256 and byte-length verification;
+- deterministic normalized Relay event identity;
+- durable pre-delivery state, acknowledgement recording, deduplication and restart-safe retry;
+- fail-closed project/repository isolation;
+- one-shot Google Drive v3 inbound polling for one explicitly configured folder;
+- exact raw-file staging with provider-version revalidation before Watcher delivery.
+
+Live Google Drive qualification is still pending because credentials were not supplied during the inbound-adapter milestone.
 
 ## Core rule
 
@@ -16,17 +26,21 @@ The Relay Manager must never decide whether a prompt is authorized, whether an E
 
 Google Drive is the first supported durable transport.
 
+The current inbound adapter supports raw downloadable files only. Native Google Workspace documents are deliberately not exported into the machine transport path because export would not preserve authoritative stored bytes.
+
 Future adapters may support other providers, but provider expansion is not part of the initial implementation.
 
 ## Product shape
 
-One installation contains:
+One installation is intended to contain:
 
 - a background Relay Service that continues monitoring when the UI is closed;
 - a desktop UI for project/folder configuration, status, health, and event history;
 - a Google Drive adapter;
 - a local normalized event interface used by project Watchers;
 - simple local durable state for configuration, provider cursors, deduplication, delivery attempts, and health; add a database only if demonstrated runtime or scale evidence requires it.
+
+The background service and desktop UI are not implemented yet.
 
 ## Multi-project model
 
@@ -38,7 +52,7 @@ Project streams are isolated. A Drive folder must identify itself with the expec
 
 ## UI goals
 
-The UI must allow a user to:
+The future UI must allow a user to:
 
 - add/edit/disable projects;
 - select the Drive folder to monitor;

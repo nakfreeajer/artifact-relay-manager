@@ -2,39 +2,61 @@
 
 Project: `artifact-relay-manager`
 
-Status: `RELAY.CORE.VERTICAL.1A` is accepted on branch `relay-core-vertical-1a`.
+Status: `RELAY.GDRIVE.INBOUND.1A` is accepted on branch `gdrive-inbound-1a`.
 
-Accepted Relay core capabilities:
-- configured project identity and repository identity are enforced;
-- bounded artifact bytes are hashed exactly with SHA-256 and byte length;
-- normalized Relay events use deterministic event IDs derived from the transport dedupe tuple;
-- event state is persisted before Watcher delivery;
-- Watcher acknowledgements are recorded;
-- duplicate observations are bounded;
-- unavailable Watcher delivery remains pending and retryable;
-- fresh-process retry preserves the same event identity;
-- persisted state is semantically revalidated before retry so cross-project or identity-corrupt events fail closed;
-- local durable files are used; no SQLite was introduced.
+Accepted Relay core:
+- exact-byte SHA-256 and byte length;
+- deterministic normalized event identity;
+- project/repository identity fail-closed checks;
+- durable persistence before Watcher delivery;
+- Watcher acknowledgement recording;
+- duplicate suppression;
+- pending retention and restart-safe retry;
+- semantic persisted-state validation before retry.
 
-Accepted implementation commits:
-- `e77b8105a8be26418165479ca4f92ea6be0c8a33` — deterministic core transport vertical slice.
-- `9b73f05e0919796093a327f220d4d6ea093eb783` — persisted-event validation before retry.
+Accepted Google Drive inbound capabilities:
+- one-shot polling of direct children from one explicitly configured Drive folder;
+- exactly one raw `.relay-project.json` identity file required;
+- projectId/repository identity hard-stop enforcement;
+- Drive file `id` as provider item identity;
+- Drive `File.version` as provider version identity;
+- exact raw-byte download and atomic local staging;
+- 1 MiB artifact bound;
+- native Google Workspace files skipped rather than exported/normalized;
+- post-download metadata recheck binds downloaded bytes to the listed file version, size, parent, MIME/state and download capability;
+- final Drive identity revalidation before Watcher delivery;
+- token kept in `RELAY_GDRIVE_ACCESS_TOKEN`, not tracked config/state/output;
+- production API origin fixed to Google Drive v3; loopback override is test-only.
 
-Validation reported by Executor and independently source-reviewed by Architect:
-- 12/12 unit tests passed;
+Accepted Drive commits:
+- `a1557e9c87c72e76243f5cebf1b59c9875ff472f` — Google Drive inbound adapter.
+- `23fa8b9142f798fa22de50ae4cfe8e1624576794` — bind downloaded bytes to provider version and revalidate identity before delivery.
+
+Final deterministic validation reported by Executor and independently source-reviewed by Architect:
+- 29/29 unit tests passed;
 - Python compile checks passed;
-- CLI lifecycle demo passed;
+- fake-Drive CLI lifecycle demo passed;
+- original core CLI demo passed;
 - `git diff --check` passed.
 
+Live qualification:
+- `LIVE_VALIDATION_BLOCKED=credentials_not_supplied`;
+- no live Drive request was made;
+- this does not invalidate deterministic milestone acceptance because live access was explicitly optional and separately reported.
+
 Current limitations:
-- fixture/local observation only;
-- no real Google Drive API/change monitoring yet;
+- bearer access token must be supplied externally;
+- no OAuth/login/refresh workflow;
+- no background poll loop or scheduler;
+- no Drive Changes cursor;
 - no desktop UI;
-- no scheduler or provider framework;
-- no IPv6 Watcher endpoint support;
+- no outbound Drive publishing;
+- no recursive/Drive-wide discovery;
+- no native Workspace export;
+- no multi-provider framework;
 - no project-Orchestrator workflow authority.
 
 Next engineering direction:
-- implement the real Google Drive inbound adapter as the next bounded Relay milestone;
-- feed provider facts into the accepted 1A transport core rather than redesigning it;
-- preserve exact project isolation, at-least-once transport and transport-only authority.
+- add the smallest secure Google Drive authentication/session bootstrap and perform the first bounded live read-only qualification against one explicitly configured test folder;
+- preserve the accepted one-shot adapter and core semantics;
+- do not add scheduler/UI/provider-framework complexity until authentication and live read-only qualification are proven.
