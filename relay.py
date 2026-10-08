@@ -81,6 +81,7 @@ def deliver(c,sp,s,eid):
   with urllib.request.urlopen(q,timeout=2) as x:
    if not 200<=x.status<300:return "pending"
    ack=json.loads(x.read(65536).decode())
+ except urllib.error.HTTPError as e: e.close(); return "pending"
  except (OSError,urllib.error.URLError,UnicodeError,json.JSONDecodeError,TimeoutError): return "pending"
  if not isinstance(ack,dict) or set(ack)!={"disposition"} or ack["disposition"] not in ACKS:return "pending"
  r["status"]="acknowledged";r["acknowledgement"]=ack["disposition"];save(sp,s);return "delivered"
@@ -90,14 +91,16 @@ def process(cp,sp,fp):
   if s["events"][eid]["dedupeKey"]!=k:raise RelayError("event identity conflict")
  else:s["events"][eid]={"dedupeKey":k,"event":e,"status":"pending","attempts":0,"acknowledgement":None};save(sp,s)
  return eid,deliver(c,sp,s,eid)
-def retry(cp,sp):
- c=config(cp);s=state(sp,c["projectId"]);return [(eid,deliver(c,sp,s,eid)) for eid,r in list(s["events"].items()) if r["status"]=="pending"]
+def retry_pending(cp,sp,exclude_event_ids=()):
+ c=config(cp);s=state(sp,c["projectId"]);excluded=set(exclude_event_ids)
+ return [(eid,deliver(c,sp,s,eid)) for eid,r in list(s["events"].items()) if r["status"]=="pending" and eid not in excluded]
+def retry(cp,sp): return retry_pending(cp,sp)
 def status(sp):
  s=state(sp);o={"events":len(s["events"]),"pending":0,"acknowledged":0}
  for r in s["events"].values():o[r["status"]]+=1
  return o
 def main():
- p=argparse.ArgumentParser();p.add_argument("--config",type=Path,required=True);p.add_argument("--state",type=Path);sub=p.add_subparsers(dest="cmd",required=True);q=sub.add_parser("process");q.add_argument("fixture",type=Path);sub.add_parser("retry");sub.add_parser("status");drive=sub.add_parser("poll-drive");drive.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");qualify=sub.add_parser("qualify-drive");qualify.add_argument("--qualification-file-id",required=True);qualify.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");sub.add_parser("reset-drive-auth");a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument("--config",type=Path,required=True);p.add_argument("--state",type=Path);sub=p.add_subparsers(dest="cmd",required=True);q=sub.add_parser("process");q.add_argument("fixture",type=Path);sub.add_parser("retry");sub.add_parser("status");drive=sub.add_parser("poll-drive");drive.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");qualify=sub.add_parser("qualify-drive");qualify.add_argument("--qualification-file-id",required=True);qualify.add_argument("--api-base-url",help="test-only HTTP loopback Drive API base URL");sub.add_parser("reset-drive-auth");monitor=sub.add_parser("monitor-drive");monitor.add_argument("--interval-seconds",type=int,default=30);monitor.add_argument("--max-cycles",type=int);a=p.parse_args()
  try:
   if a.cmd not in ("qualify-drive", "reset-drive-auth") and a.state is None: raise RelayError("--state is required for this command")
   if a.cmd=="process":
@@ -116,6 +119,9 @@ def main():
   if a.cmd=="reset-drive-auth":
    import drive_auth
    removed=drive_auth.reset_auth_session();print(json.dumps({"result":"RESET","removed":removed},sort_keys=True));return 0
+  if a.cmd=="monitor-drive":
+   import drive_monitor
+   return drive_monitor.run_cli(a.config,a.state,a.interval_seconds,a.max_cycles)
   print(json.dumps(status(a.state),sort_keys=True));return 0
  except RelayError as e: print("relay error: "+str(e),file=__import__("sys").stderr);return 1
 if __name__=="__main__":

@@ -135,6 +135,82 @@ def get_access_token(*, flow_class: Any = None, request_class: Any = None,
         oauth_logger.setLevel(previous_log_level)
 
 
+class DriveAuthSession:
+    """Noninteractive in-memory OAuth credentials for a long-running monitor."""
+
+    def __init__(self, *, request_class: Any = None, credentials_class: Any = None,
+                 session_store: Any = None):
+        client_config = _client_config()
+        self.client = client_config["installed"]
+        try:
+            self.store = session_store if session_store is not None else drive_session.DriveSessionStore(
+                self.client["client_id"], SCOPE
+            )
+            refresh_token = self.store.load_refresh_token()
+        except drive_session.SessionStoreError as exc:
+            raise DriveAuthError(str(exc)) from None
+        if refresh_token is None:
+            raise DriveAuthError(
+                "protected Google Drive session is not initialized; run qualify-drive interactively first"
+            )
+        self.refresh_token = refresh_token
+        if request_class is None:
+            try:
+                from google.auth.transport.requests import Request
+            except ImportError:
+                raise DriveAuthError("Google OAuth dependencies are not installed") from None
+            request_class = Request
+        if credentials_class is None:
+            try:
+                from google.oauth2.credentials import Credentials
+            except ImportError:
+                raise DriveAuthError("Google OAuth dependencies are not installed") from None
+            credentials_class = Credentials
+        try:
+            self.credentials = credentials_class(
+                token=None, refresh_token=refresh_token, token_uri=self.client["token_uri"],
+                client_id=self.client["client_id"], client_secret=self.client["client_secret"],
+                scopes=[SCOPE],
+            )
+            self.request = request_class()
+        except (TypeError, ValueError):
+            raise DriveAuthError("Google Drive session credentials are invalid") from None
+
+    def access_token(self) -> str:
+        if not getattr(self.credentials, "valid", False):
+            self.refresh()
+        token = getattr(self.credentials, "token", None)
+        if not isinstance(token, str) or not token:
+            raise DriveAuthError("Google Drive session has no valid access token")
+        return token
+
+    def invalidate(self) -> None:
+        self.credentials.token = None
+
+    def refresh(self) -> str:
+        oauth_logger = logging.getLogger("google.auth.transport.requests")
+        previous_level = oauth_logger.level
+        oauth_logger.setLevel(logging.CRITICAL)
+        try:
+            try:
+                self.credentials.refresh(self.request)
+            except Exception:
+                raise DriveAuthError("Google Drive session refresh failed") from None
+            token = getattr(self.credentials, "token", None)
+            if not getattr(self.credentials, "valid", False) or not isinstance(token, str) or not token:
+                raise DriveAuthError("Google Drive session refresh returned no valid access token")
+            rotated = getattr(self.credentials, "refresh_token", None)
+            if rotated and rotated != self.refresh_token:
+                try:
+                    self.store.save_refresh_token(rotated)
+                except drive_session.SessionStoreError as exc:
+                    raise DriveAuthError(str(exc)) from None
+                self.refresh_token = rotated
+            return token
+        finally:
+            oauth_logger.setLevel(previous_level)
+
+
 def reset_auth_session(*, session_store: Any = None) -> bool:
     """Remove only this installed client/exact-scope local protected session."""
     client = _client_config()["installed"]

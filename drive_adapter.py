@@ -24,6 +24,14 @@ class DriveError(relay.RelayError):
     """Drive API or configured Drive observation failure."""
 
 
+class DriveHttpError(DriveError):
+    """Sanitized Drive API HTTP failure with a structured status code."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Google Drive API returned HTTP {status_code}")
+
+
 def _safe_json(data: bytes) -> dict:
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_pairs)
@@ -92,7 +100,7 @@ class DriveClient:
         except urllib.error.HTTPError as exc:
             code = exc.code
             exc.close()
-            raise DriveError(f"Google Drive API returned HTTP {code}") from None
+            raise DriveHttpError(code) from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise DriveError("Google Drive API request failed") from None
         if len(data) > limit:
