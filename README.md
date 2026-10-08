@@ -24,6 +24,8 @@ The registry is stored by default at `%LOCALAPPDATA%\ArtifactRelayManager\projec
 
 A real Google Drive read-only qualification passed on 2026-10-08 against one explicitly configured test folder and designated 26-byte text artifact. The observed Drive version was `3` and the exact-byte SHA-256 was `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 
+The foreground multi-project supervisor also passed a bounded live two-cycle qualification on 2026-10-08 using the existing protected session and a local mock Watcher: it delivered the designated file once, deduplicated the unchanged version on cycle 2, and recorded one acknowledged event. No browser opened and no Drive mutation occurred. Sanitized evidence is stored under the ignored `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/` directory.
+
 The `RELAY.GDRIVE.AUTH.SESSION.1A` branch adds a current-user DPAPI encrypted local refresh-token file, bound to the installed client and exact scope. Fresh processes refresh silently; access tokens remain memory-only.
 
 ## Core rule

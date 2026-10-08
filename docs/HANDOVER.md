@@ -33,7 +33,7 @@ Implemented on branch `project-supervisor-1a`:
 - project-local failures are isolated; shared auth failure degrades the current and remaining projects for that cycle;
 - enable/disable/add/remove changes take effect on the next cycle;
 - local two-project qualification passed with separate configs, state paths, workspaces and Drive folder identities; shared auth refreshed once and the mock Watcher received one stable event per project;
-- real one-project qualification is `LIVE_VALIDATION_BLOCKED=protected_session_unavailable` because OAuth client configuration was absent from the process environment; no browser or Drive request was made.
+- live one-project supervisor qualification passed on 2026-10-08 using the existing protected session. Two cycles returned OK: cycle 1 delivered the current designated file once and cycle 2 deduplicated it. The file was version `3`, 26 bytes, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`; one acknowledged state event and one local mock Watcher receipt shared event ID `relay-02471a4ffcf9a90b6ee27824533420ebda3c7f3a93d13b1e88c6525438a76ae9`. The protected session remained usable afterward; no browser opened and no Drive mutation occurred. Sanitized evidence is in ignored `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/live-supervisor-qualification.json`.
 
 Source/tests commit: `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`.
 Validation: 97/97 tests passed; changed Python files compiled; both existing CLI demos, the dedicated supervisor qualification, and `git diff --check` passed. Evidence is in the ignored `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/` directory.
