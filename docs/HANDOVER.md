@@ -1,4 +1,4 @@
-# Handover
+﻿# Handover
 
 ## Repository
 `nakfreeajer/artifact-relay-manager`
@@ -58,14 +58,14 @@ Accepted ephemeral Google Drive OAuth bootstrap and live read-only qualification
 
 Accepted commit:
 - `18d8d45c4ad505651f6ac4ef7f47165c0d068555`
-- `eb3339a452badc14e9fb05668a96f128efbb03a2` — script-mode provider/auth failures now use the sanitized CLI error contract.
+- `eb3339a452badc14e9fb05668a96f128efbb03a2` â€” script-mode provider/auth failures now use the sanitized CLI error contract.
 
 Deterministic validation after Architect Correction 1: 42/42 tests passed, including subprocess coverage for provider HTTP 403, missing OAuth client configuration, and a successful fake/local qualification.
 Live qualification: `QUALIFIED_READ_ONLY`, 26 bytes, `text/plain`, Drive version `3`, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 
 ### RELAY.GDRIVE.AUTH.SESSION.1A
 Implemented Windows-only persistent Google OAuth session on branch `gdrive-auth-session-1a`:
-- source/tests commit: `c479aa144f5f69beebc236f60316cfe010f3d35f`;
+- source/tests commit: `c479aa1488aacf470562a236090ae10d305d7ef8`;
 - refresh token is protected with current-user DPAPI and bound to application, client ID and exact `drive.readonly` scope;
 - refresh token is persisted atomically; access token and client secret remain in process memory;
 - fresh processes refresh without opening a browser;
@@ -102,3 +102,4 @@ Keep this bounded:
 Do not start the background poll loop, desktop UI, outbound publishing, multi-provider framework, Codex launch/relaunch, Architect rollover, scheduler/workflow engine, or a database in the same milestone.
 
 Do not redesign accepted core/inbound/auth behavior unless direct regression evidence proves a defect.
+

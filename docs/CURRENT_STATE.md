@@ -1,4 +1,4 @@
-# Current State
+﻿# Current State
 
 Project: `artifact-relay-manager`
 
@@ -38,11 +38,11 @@ Accepted Google Drive authentication / qualification capabilities:
 - qualification creates no Watcher event, no Relay delivery state and performs no Drive mutation.
 
 Accepted authentication implementation commit:
-- `18d8d45c4ad505651f6ac4ef7f47165c0d068555` — ephemeral Drive OAuth and read-only qualification.
-- `eb3339a452badc14e9fb05668a96f128efbb03a2` — script-mode Drive/Auth error identity correction, verified with subprocess tests.
+- `18d8d45c4ad505651f6ac4ef7f47165c0d068555` â€” ephemeral Drive OAuth and read-only qualification.
+- `eb3339a452badc14e9fb05668a96f128efbb03a2` â€” script-mode Drive/Auth error identity correction, verified with subprocess tests.
 
 `RELAY.GDRIVE.AUTH.SESSION.1A` adds a Windows current-user DPAPI protected refresh-token session. The deterministic suite and real read-only qualification verify fresh-process refresh reuse without reopening the browser. The protected file contains only the refresh token payload; client/scope identity is hashed into its filename and bound as DPAPI entropy. `reset-drive-auth` removes only that local session.
-Implementation commit: `c479aa144f5f69beebc236f60316cfe010f3d35f`.
+Implementation commit: `c479aa1488aacf470562a236090ae10d305d7ef8`.
 
 Deterministic validation:
 - 42/42 unit tests passed, including subprocess checks for HTTP 403, missing OAuth client configuration, and successful qualification;
@@ -83,3 +83,4 @@ Current limitations:
 Next engineering direction:
 - preserve the bounded Windows protected-session behavior while addressing future platform support only in a separately scoped milestone;
 - keep scheduler, UI, outbound publishing and provider expansion out of scope until separately authorized.
+
