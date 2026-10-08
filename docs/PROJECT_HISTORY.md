@@ -1,5 +1,12 @@
 # Project History
 
+## 2026-10-08 — RELAY.PROJECT.SUPERVISOR.1A implementation
+
+Added a foreground sequential supervisor that reloads and validates the local project registry on every cycle, then runs one accepted monitor cycle for each enabled project in projectId order. It shares one lazy noninteractive DriveAuthSession across projects/cycles, isolates project-local failures, suppresses further project work after a shared auth failure, observes registry changes at cycle boundaries, and emits metadata-only cycle records. Ctrl+C emits `STOPPED`. No background service or workflow authority was added.
+
+Source/tests commit: `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`.
+Validation: 97/97 tests passed; Python compile checks and both existing CLI demos passed; deterministic two-project qualification passed with per-project state/event isolation and one shared auth refresh. Real qualification was blocked because no OAuth client config path was available; no browser or Drive request was made.
+
 ## 2026-10-08 — RELAY.PROJECT.REGISTRY.1A implementation
 
 Added a local durable project registry that references existing per-project Drive config and Relay state files. The schemaVersion 1 JSON registry uses canonical paths, deterministic projectId ordering, strict duplicate-key/schema checks, project/config identity checks, and collision checks for project IDs, config/state paths, Relay workspaces, and Drive folders. Writes use a same-directory temporary file followed by flush/fsync and atomic replacement. The `relay_projects.py` CLI supports list/add/show/enable/disable/remove/validate and returns metadata-only JSON. Registry operations do not call Drive, Watcher, browser OAuth, or protected-session APIs. No supervisor consumes the registry yet.

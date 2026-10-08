@@ -2,9 +2,13 @@
 
 Project: `artifact-relay-manager`
 
-Status: `RELAY.PROJECT.REGISTRY.1A` is implemented on branch `project-registry-1a`; it is not merged to `main`.
+Status: `RELAY.PROJECT.SUPERVISOR.1A` is implemented on branch `project-supervisor-1a`; it is not merged to `main`.
 
-`RELAY.PROJECT.REGISTRY.1A` adds a local schemaVersion 1 JSON registry at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` by default. Entries reference existing per-project Drive config and Relay state paths rather than duplicating configuration. Writes use a same-directory temporary file, flush/fsync, and atomic replace. Validation rejects project ID, canonical config/state path, configured workspace, and Drive folder collisions. `relay_projects.py` provides list/add/show/enable/disable/remove/validate operations. Registry operations validate local configuration and have no Drive, Watcher, OAuth/browser, or protected-session side effects. No supervisor consumes the registry yet; foreground single-project `monitor-drive` remains the only monitor runtime.
+`RELAY.PROJECT.REGISTRY.1A` adds a local schemaVersion 1 JSON registry at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` by default. Entries reference existing per-project Drive config and Relay state paths rather than duplicating configuration. Writes use a same-directory temporary file, flush/fsync, and atomic replace. Validation rejects project ID, canonical config/state path, configured workspace, and Drive folder collisions. `relay_projects.py` provides list/add/show/enable/disable/remove/validate operations. Registry operations validate local configuration and have no Drive, Watcher, OAuth/browser, or protected-session side effects.
+
+`RELAY.PROJECT.SUPERVISOR.1A` adds a foreground sequential supervisor. It reloads and validates the registry at each cycle boundary, runs enabled entries in deterministic projectId order, and executes one existing Drive monitor cycle for each. One lazily created noninteractive `DriveAuthSession` is shared across projects and cycles. Project-local provider/identity/Watcher/state failures do not stop later projects; a shared auth failure marks remaining projects auth-degraded for that cycle. Registry changes take effect on the next cycle. The CLI is `python relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]`.
+
+Supervisor source/tests commit: `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`. Final deterministic validation passed: 97/97 tests, changed Python compile checks, both existing CLI demos, the dedicated two-project supervisor qualification, and `git diff --check`. Live one-project Drive qualification is `LIVE_VALIDATION_BLOCKED=protected_session_unavailable`: the process had no OAuth client config path and stopped before protected-session access; no browser or Drive request was made.
 
 Registry source/tests commit: `6848633a69aba57b5b8f86596c5ccecce6d3c664`. Final deterministic validation passed: 82/82 tests; changed Python compile checks; both existing CLI demos; and `git diff --check`. The six-command local CLI qualification passed without Drive, Watcher, OAuth/browser, or protected-session access.
 
@@ -91,20 +95,21 @@ Observed live prerequisite failure before PASS:
 - the script-mode correction was qualified locally with a deterministic fake Drive endpoint; the previously recorded real qualification result remains unchanged.
 
 Current limitations:
-- project registry is not yet consumed by a multi-project supervisor;
-- foreground single-project `monitor-drive` remains the only monitor runtime;
+- foreground supervisor is available and executes projects sequentially in one process;
+- Windows Service/background host and supervisor service-control integration are not implemented;
+- desktop UI and supervisor management API are not implemented;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;
 - refresh failure is sanitized and keeps the existing session; recovery requires explicit operator action such as reset and browser reauthorization;
 - `poll-drive` still retains the existing manual `RELAY_GDRIVE_ACCESS_TOKEN` path;
-- no Windows Service or background startup; `monitor-drive` is foreground only;
+- `monitor-drive` remains available as a foreground single-project command;
 - no scheduler or Drive Changes cursor;
 - no desktop UI;
 - no outbound Drive publishing;
 - no recursive/Drive-wide discovery;
 - no native Workspace export;
 - no multi-provider framework;
-- one project per monitor process;
+- no concurrent project execution;
 - no database;
 - no project-Orchestrator workflow authority.
 

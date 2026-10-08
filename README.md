@@ -17,9 +17,10 @@ Current accepted capabilities include:
 - Windows DPAPI-protected refresh-token session reuse across fresh processes, with local reset support;
 - foreground single-project `monitor-drive` loop with bounded polling, in-memory access-token reuse, 401 recovery, degraded-cycle backoff, and pending transport retry;
 - local schema-versioned project registry that references existing Drive config and Relay state files, with atomic JSON updates and collision validation;
+- foreground `relay_supervisor.py` that reloads the project registry each cycle and sequentially runs one monitor cycle for every enabled project with one shared in-memory auth session;
 - bounded real-Drive read-only qualification of one explicitly designated raw artifact without Watcher delivery or Relay state.
 
-The registry is stored by default at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`. Manage it with `python relay_projects.py [--registry <path>] list|add|show|enable|disable|remove|validate`. It stores only project metadata and canonical config/state paths; it does not copy project configuration or credentials. Registry operations validate local files and make no Drive, Watcher, browser OAuth, or protected-session calls. The registry is not consumed by a supervisor yet; `monitor-drive` remains a foreground single-project runtime.
+The registry is stored by default at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`. Manage it with `python relay_projects.py [--registry <path>] list|add|show|enable|disable|remove|validate`. It stores only project metadata and canonical config/state paths; it does not copy project configuration or credentials. Run the foreground multi-project supervisor with `python relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]`. It reloads the registry at each cycle boundary and runs enabled projects sequentially in projectId order. One noninteractive Drive auth session is shared across enabled projects and cycles. Windows Service/background hosting, desktop UI, and a management API are not implemented.
 
 A real Google Drive read-only qualification passed on 2026-10-08 against one explicitly configured test folder and designated 26-byte text artifact. The observed Drive version was `3` and the exact-byte SHA-256 was `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`.
 

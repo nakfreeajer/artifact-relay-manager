@@ -20,10 +20,23 @@ Implemented on branch `project-registry-1a`:
 - rejects project ID, config path, state path, workspace, and Drive folder collisions;
 - `relay_projects.py` supports list/add/show/enable/disable/remove/validate;
 - validates the current local Drive config without Drive HTTP, Watcher, OAuth/browser, or protected-session access;
-- does not add a registry consumer; monitoring remains foreground and single-project.
+- registry milestone provided the data store; `RELAY.PROJECT.SUPERVISOR.1A` adds the foreground consumer below.
 
 Source/tests commit: `6848633a69aba57b5b8f86596c5ccecce6d3c664`.
 Validation: 82/82 unit tests passed; changed Python files compiled; Drive and core CLI demos and `git diff --check` passed. Six-command local qualification passed in separate CLI processes. Evidence is in the ignored `.agent-work/milestones/RELAY.PROJECT.REGISTRY.1A/evidence/` directory.
+
+### RELAY.PROJECT.SUPERVISOR.1A
+Implemented on branch `project-supervisor-1a`:
+- `relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]` runs a foreground sequential supervisor;
+- registry is loaded and strictly validated fresh at each cycle boundary; enabled projects execute in deterministic projectId order;
+- one shared in-memory noninteractive DriveAuthSession is reused across enabled projects and cycles;
+- project-local failures are isolated; shared auth failure degrades the current and remaining projects for that cycle;
+- enable/disable/add/remove changes take effect on the next cycle;
+- local two-project qualification passed with separate configs, state paths, workspaces and Drive folder identities; shared auth refreshed once and the mock Watcher received one stable event per project;
+- real one-project qualification is `LIVE_VALIDATION_BLOCKED=protected_session_unavailable` because OAuth client configuration was absent from the process environment; no browser or Drive request was made.
+
+Source/tests commit: `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`.
+Validation: 97/97 tests passed; changed Python files compiled; both existing CLI demos, the dedicated supervisor qualification, and `git diff --check` passed. Evidence is in the ignored `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/` directory.
 
 ### RELAY.CORE.VERTICAL.1A
 Accepted deterministic transport core:
@@ -104,7 +117,7 @@ Source/tests commit: `d3d6ba38d02c03a609ca5a62cd9fd8eaac41c303`.
 
 Final validation: 62/62 tests passed; compile checks, both existing CLI demos, monitor tests, and `git diff --check` passed.
 
-Limitations: one project per process; full direct-child polling without a Drive Changes cursor; foreground process only; no Windows Service/background startup, UI, outbound publishing, multi-provider framework, database, or project-Orchestrator authority.
+Limitations of `monitor-drive`: one configured project per process. The separate foreground supervisor executes enabled projects sequentially. Monitoring remains foreground only, with no Windows Service/background startup, UI, outbound publishing, multi-provider framework, database, or project-Orchestrator authority.
 
 ## Fresh worktree bootstrap
 From the repository root:
@@ -121,8 +134,8 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 
 ## Handover boundary
 
-RELAY.PROJECT.REGISTRY.1A completes the local durable project registry. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
+RELAY.PROJECT.SUPERVISOR.1A completes the foreground sequential multi-project supervisor. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
 
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.
-- Do not add a scheduler, UI, outbound publishing, provider framework, database, multi-project supervisor, or Windows Service unless explicitly selected in a future bounded milestone.
+- Do not add a scheduler/workflow engine, UI, service management API, outbound publishing, provider framework, database, or Windows Service unless explicitly selected in a future bounded milestone.

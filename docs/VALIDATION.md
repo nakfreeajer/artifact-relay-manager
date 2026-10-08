@@ -1,5 +1,23 @@
 # Validation
 
+## RELAY.PROJECT.SUPERVISOR.1A
+
+Supervisor coverage proves zero-enabled `IDLE` without auth creation or state access; deterministic sequential execution with each registry entry's own config/state path; one auth object and one refresh reused across projects/cycles; project-local failure isolation; pending Watcher delivery remains in the same project's Relay state/event identity; shared-auth failure skips remaining project calls and retries on a later cycle; corrupt registry processes zero projects and recovers after repair; bounded registry backoff; next-cycle enable/disable/add/remove behavior; metadata-only output; and clean `STOPPED` handling.
+
+The dedicated ignored local qualification uses two distinct project IDs, Drive configs, state paths, workspaces and folder IDs with a loopback mock Watcher and injected bounded provider observations. Three supervisor cycles executed A/B, then B while A was disabled, then A/B after re-enable. Each project retained one event under its own identity; the mock Watcher received exactly one event per project. The shared auth harness was instantiated once and refreshed once. No Drive API call or browser OAuth occurred. Results are in `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/multi-project-qualification.json`.
+
+Real one-project qualification was attempted only as a noninteractive prerequisite check. It is `LIVE_VALIDATION_BLOCKED=protected_session_unavailable`: `RELAY_GDRIVE_OAUTH_CLIENT_FILE` was not configured, so `DriveAuthSession` failed before protected-session access. No browser, Drive request, or Drive mutation occurred. No live supervisor cycles or event/deduplication result are claimed.
+
+Final deterministic validation:
+- `python -m unittest discover -s tests -v` — 97 passed, 0 failed;
+- `python -m py_compile drive_monitor.py project_supervisor.py relay_supervisor.py tests/test_project_supervisor.py tests/supervisor_cli_demo.py` — passed;
+- `python tests/gdrive_cli_demo.py` — passed;
+- `python tests/cli_demo.py` — passed;
+- `python tests/supervisor_cli_demo.py` — passed;
+- `git diff --check` — passed.
+
+Supervisor command: `python relay_supervisor.py [--registry <path>] run --interval-seconds 30 [--max-cycles N]`. It uses one process and sequential project execution. Windows Service/background startup, desktop UI, service management API, database, Drive Changes cursor, outbound publishing, multi-provider framework, scheduler/workflow engine, and project-Orchestrator authority are not implemented.
+
 ## RELAY.PROJECT.REGISTRY.1A
 
 Registry-specific coverage proves absent-registry initialization, strict schema and duplicate-key rejection, metadata-only output, canonical paths, stable ordering, fresh-process persistence, enable/disable revalidation, safe remove semantics, project identity matching, and fail-closed collision handling for projectId/configPath/statePath/relayWorkspace/folderId. Atomic replacement failure preserves the prior valid registry. Side-effect tests block all `urllib.request.urlopen` calls and verify a protected-session sentinel remains unchanged.
@@ -13,7 +31,7 @@ Final deterministic validation:
 - `python tests/cli_demo.py` — passed;
 - `git diff --check` — passed.
 
-Registry CLI shape: `python relay_projects.py [--registry <path>] list|add|show|enable|disable|remove|validate`. The default registry is `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`. It stores schemaVersion 1 and project metadata plus canonical references to existing config/state files. No registry supervisor, Windows Service, UI, database, Drive Changes cursor, outbound publishing, provider framework, or Orchestrator authority was added. The foreground single-project monitor remains the only monitor runtime.
+Registry CLI shape: `python relay_projects.py [--registry <path>] list|add|show|enable|disable|remove|validate`. The default registry is `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`. It stores schemaVersion 1 and project metadata plus canonical references to existing config/state files. The registry milestone itself added no consumer; the foreground multi-project consumer is recorded in the supervisor section below. Windows Service, UI, database, Drive Changes cursor, outbound publishing, provider framework, and Orchestrator authority were not added by the registry milestone.
 
 Accepted Relay core coverage includes:
 - valid project identity;
