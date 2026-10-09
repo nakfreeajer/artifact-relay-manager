@@ -134,8 +134,8 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 
 ## Handover boundary
 
-RELAY.PROJECT.SUPERVISOR.1A completes the foreground sequential multi-project supervisor. The selected follow-on `RELAY.WINDOWS.USERHOST.1A` is on the unmerged `windows-userhost-1a` branch from `2b0e316ac347a769ce61b26fc6344528efeab168` and stops for Architect review after bounded validation. Do not merge, register a scheduled task, or start another milestone before that review.
+RELAY.PROJECT.SUPERVISOR.1A completes the foreground sequential multi-project supervisor. `RELAY.WINDOWS.USERHOST.1A` is on the unmerged `windows-userhost-1a` branch from `2b0e316ac347a769ce61b26fc6344528efeab168`, implementation commit `34ad80ed6110393500deabe19271f40a18d762d6`, and is Architect-accepted with explicit limitations. Its local enabled-project fixture delivery and one disposable Task Scheduler COM dry run passed; the exact temporary task was removed. No persistent scheduled task exists. The documentation closure is to be committed and pushed on this feature branch, then stop for Architect final merge review. Do not merge, tag, register another task, or start another milestone before that review.
 
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.
-- Do not add a scheduler/workflow engine, UI, service management API, outbound publishing, provider framework, database, Windows Service, or Task Scheduler registration unless explicitly selected in a bounded milestone. The per-user launcher is a process host only; Relay still transports and monitors while the Watcher decides.
+- Do not add a scheduler/workflow engine, UI, service management API, outbound publishing, provider framework, database, Windows Service, or persistent/automatic Task Scheduler deployment unless explicitly selected in a bounded milestone. The per-user launcher is a process host only; its one-shot manual Scheduler qualification did not add a persistent task. Relay still transports and monitors while the Watcher decides.

@@ -96,7 +96,7 @@ Observed live prerequisite failure before PASS:
 
 Current limitations:
 - foreground supervisor is available and executes projects sequentially in one process;
-- Windows Service/task registration remain unimplemented; the separate `windows-userhost-1a` branch adds a per-user process launcher but is not merged or yet Architect-accepted;
+- persistent Windows Service or Task Scheduler deployment remains unimplemented; the separate `windows-userhost-1a` branch adds an opt-in per-user process launcher and is Architect-accepted with explicit limitations;
 - desktop UI and supervisor management API are not implemented;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;
@@ -113,4 +113,4 @@ Current limitations:
 - no database;
 - no project-Orchestrator workflow authority.
 
-`RELAY.WINDOWS.USERHOST.1A` is implemented and deterministically validated on the unmerged `windows-userhost-1a` branch from main baseline `2b0e316ac347a769ce61b26fc6344528efeab168`; it is awaiting Architect review. It adds only a per-user launcher around the accepted supervisor. Task Scheduler registration, Windows Service changes, and Orchestrator authority are out of scope. See `docs/WINDOWS_USERHOST.md` for its contract and `docs/VALIDATION.md` for qualification status.
+`RELAY.WINDOWS.USERHOST.1A` is implemented on the unmerged `windows-userhost-1a` branch from main baseline `2b0e316ac347a769ce61b26fc6344528efeab168`, implementation commit `34ad80ed6110393500deabe19271f40a18d762d6`. Architect accepted it with explicit limitations. The per-user launcher reuses the accepted supervisor. A deterministic enabled-project local fixture qualification passed, and one temporary Task Scheduler COM task passed a disabled-project dry run; that exact task was deleted and its absence verified. No persistent task exists. Windows Service support, automatic logon trigger behavior, task-context live Drive/DPAPI delivery, and Orchestrator authority remain unqualified or out of scope. See `docs/WINDOWS_USERHOST.md` for its contract and `docs/VALIDATION.md` for qualification results.
