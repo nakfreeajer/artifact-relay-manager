@@ -96,7 +96,7 @@ Observed live prerequisite failure before PASS:
 
 Current limitations:
 - foreground supervisor is available and executes projects sequentially in one process;
-- persistent Windows Service or Task Scheduler deployment remains unimplemented; the separate `windows-userhost-1a` branch adds an opt-in per-user process launcher and is Architect-accepted with explicit limitations;
+- no persistent Windows Service or Task Scheduler deployment is configured. The per-user UserHost launcher is Architect-accepted; its live manual Task Scheduler qualification proved task-context protected-session Drive reads, one local mock Watcher acknowledgement, and next-cycle deduplication. Automatic sign-in startup, sign-out behavior, and Scheduler crash/restart recovery remain unqualified;
 - desktop UI and supervisor management API are not implemented;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;
@@ -113,4 +113,4 @@ Current limitations:
 - no database;
 - no project-Orchestrator workflow authority.
 
-`RELAY.WINDOWS.USERHOST.1A` was implemented on feature branch `windows-userhost-1a` from main baseline `2b0e316ac347a769ce61b26fc6344528efeab168`, implementation commit `34ad80ed6110393500deabe19271f40a18d762d6`; its documentation closure is commit `f5fe971c6f1bbe91bff607366a3cbce112850c18`. Architect accepted it with explicit limitations and approved strict fast-forward integration. The per-user launcher reuses the accepted supervisor. A deterministic enabled-project local fixture qualification passed, and one temporary Task Scheduler COM task passed a disabled-project dry run; that exact task was deleted and its absence verified. No persistent task exists. Task-context DPAPI/live Drive delivery and automatic logon behavior remain unqualified; Windows Service support and Orchestrator authority are out of scope. See `docs/WINDOWS_USERHOST.md` for its contract and `docs/VALIDATION.md` for qualification results.
+`RELAY.WINDOWS.USERHOST.1A` was implemented at `34ad80ed6110393500deabe19271f40a18d762d6` from baseline `2b0e316ac347a769ce61b26fc6344528efeab168`; implementation and initial documentation closure were Architect-accepted. Subsequent live qualification used one temporary manually started triggerless task under the current user's `InteractiveToken`/Limited context. The existing protected session completed read-only Drive observation, one designated artifact was acknowledged by a local mock Watcher, and a second cycle deduplicated it. The ownership-verified task was removed and absence confirmed by COM and `schtasks`; no persistent task exists. Automatic sign-in startup, sign-out behavior, and Scheduler crash/restart recovery remain unqualified. Windows Service support and Orchestrator authority are out of scope. See `docs/WINDOWS_USERHOST.md` and `docs/VALIDATION.md`.

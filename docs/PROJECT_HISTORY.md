@@ -1,5 +1,14 @@
 # Project History
 
+## 2026-10-10 - RELAY.WINDOWS.USERHOST.LIVE.1A qualification closure
+
+Architect accepted the bounded live task-context qualification. One temporary, manually started, triggerless Task Scheduler task ran under the current user's `InteractiveToken` at Limited run level with `IgnoreNew`, for at most two cycles. The existing current-user DPAPI session supported read-only Drive observation of the approved test artifact. Cycle 1 delivered the artifact to a local loopback mock Watcher and persisted `RECEIVED`; cycle 2 deduplicated the same provider observation. Exactly one mock Watcher POST was accepted. Artifact metadata: Drive version `3`, 26 bytes, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`; event ID `relay-02471a4ffcf9a90b6ee27824533420ebda3c7f3a93d13b1e88c6525438a76ae9`.
+
+The task was ownership-checked before deletion; COM and `schtasks` both confirmed it absent. The launcher exited successfully, no child process remained, and locks were free. The protected session and Drive artifact were preserved; no Drive mutation or production Watcher delivery occurred. Sanitized evidence: ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.LIVE.1A/evidence/task-context-20261010-011100-bdcc22d8/qualification.json`.
+
+Earlier PowerShell ScheduledTasks/CIM query-layer calls failed with `0x80070002` for unrelated existing tasks; native COM and `schtasks` succeeded. Automatic sign-in startup, sign-out behavior, Scheduler crash/restart recovery, and Windows Service operation remain unqualified. No persistent scheduled task exists. Relay remains transport/monitor only; the Watcher / Orchestrator decides.
+
+
 ## 2026-10-09 — RELAY.WINDOWS.USERHOST.1A accepted with explicit limitations
 
 Implemented the opt-in per-user UserHost around the existing `project_supervisor.run_supervisor`; no supervisor cycle or workflow decision implementation was duplicated. Architect accepted the milestone with explicit limitations. Implementation commit: `34ad80ed6110393500deabe19271f40a18d762d6`, based on `2b0e316ac347a769ce61b26fc6344528efeab168`.
@@ -10,7 +19,7 @@ Enabled-project local injected-provider qualification used the existing supervis
 
 One disposable Task Scheduler root task was registered with the current user's `InteractiveToken`, Limited run level, no trigger, and `IgnoreNew` policy. Native COM and `schtasks` independently verified its exact name, ownership marker, identity, action, working directory and settings. One manual COM `Run()` returned a running instance; the disabled-project fixture logged two `IDLE` cycles and a clean launcher exit code 0. Both locks were free, no child process or Relay state remained, and no Drive, Watcher, OAuth client content or protected DPAPI session was accessed. The marker-verified task was deleted and absence confirmed through COM and `schtasks`. Sanitized evidence: ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/task-scheduler-com-qualification.json`.
 
-PowerShell ScheduledTasks and direct CIM task-instance queries had returned `0x80070002` for unrelated existing tasks while COM and `schtasks` found those same tasks. The two earlier disposable qualification tasks were `START_NOT_CALLED` and deleted; they were not launcher failures. Persistent Task Scheduler deployment, automatic logon trigger, pre-login/after-sign-out operation, Scheduler restart behavior, task-context DPAPI, live Google OAuth/Drive and enabled task-context event delivery remain unqualified. No persistent scheduled task or Windows Service exists. `windows-service-1a` remains separate and unmerged. Relay remains transport/monitor only; the Watcher / Orchestrator decides.
+At the time of this initial acceptance, PowerShell ScheduledTasks and direct CIM task-instance queries had returned `0x80070002` for unrelated existing tasks while COM and `schtasks` found them; the two earlier disposable tasks were not started and were deleted. Later live task-context qualification and remaining limitations are recorded above. No persistent scheduled task or Windows Service exists. Relay remains transport/monitor only; the Watcher / Orchestrator decides.
 
 ## 2026-10-08 — RELAY.PROJECT.SUPERVISOR.1A implementation
 

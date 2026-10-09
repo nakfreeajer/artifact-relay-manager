@@ -6,7 +6,7 @@ Supervisor coverage proves zero-enabled `IDLE` without auth creation or state ac
 
 The dedicated ignored local qualification uses two distinct project IDs, Drive configs, state paths, workspaces and folder IDs with a loopback mock Watcher and injected bounded provider observations. Three supervisor cycles executed A/B, then B while A was disabled, then A/B after re-enable. Each project retained one event under its own identity; the mock Watcher received exactly one event per project. The shared auth harness was instantiated once and refreshed once. No Drive API call or browser OAuth occurred. Results are in `.agent-work/milestones/RELAY.PROJECT.SUPERVISOR.1A/evidence/multi-project-qualification.json`.
 
-Real one-project qualification was attempted only as a noninteractive prerequisite check. It is `LIVE_VALIDATION_BLOCKED=protected_session_unavailable`: `RELAY_GDRIVE_OAUTH_CLIENT_FILE` was not configured, so `DriveAuthSession` failed before protected-session access. No browser, Drive request, or Drive mutation occurred. No live supervisor cycles or event/deduplication result are claimed.
+The initial noninteractive prerequisite check was blocked because `RELAY_GDRIVE_OAUTH_CLIENT_FILE` was not configured. Live supervisor qualification subsequently passed on 2026-10-08 using the existing protected session: two cycles completed, cycle 1 delivered the designated file once, and cycle 2 deduplicated it. See the accepted live results below and in `docs/PROJECT_HISTORY.md`.
 
 Final deterministic validation:
 - `python -m unittest discover -s tests -v` — 97 passed, 0 failed;
@@ -169,7 +169,7 @@ Live monitor qualification:
 
 ## RELAY.WINDOWS.USERHOST.1A
 
-Implemented at `34ad80ed6110393500deabe19271f40a18d762d6` on the unmerged `windows-userhost-1a` branch from `2b0e316ac347a769ce61b26fc6344528efeab168`; Architect accepted with explicit limitations. The per-user launcher starts the existing `project_supervisor.run_supervisor` implementation in a bounded child process, supplies an explicit local registry path and process-local OAuth client path, and leaves the foreground CLI unchanged. It validates absolute canonical paths, validates the project registry before launch, prevents log/control paths from aliasing runtime state, writes allowlisted metadata to capped rotating logs, holds parent and worker OS locks, checks that the parent process remains alive so a worker cannot remain orphaned after launcher failure, and supports an explicit cooperative stop request.
+Implemented at `34ad80ed6110393500deabe19271f40a18d762d6` on `windows-userhost-1a` from `2b0e316ac347a769ce61b26fc6344528efeab168`; Architect accepted with explicit limitations. The per-user launcher starts the existing `project_supervisor.run_supervisor` implementation in a bounded child process, supplies an explicit local registry path and process-local OAuth client path, and leaves the foreground CLI unchanged. It validates absolute canonical paths, validates the project registry before launch, prevents log/control paths from aliasing runtime state, writes allowlisted metadata to capped rotating logs, holds parent and worker OS locks, checks that the parent process remains alive so a worker cannot remain orphaned after launcher failure, and supports an explicit cooperative stop request.
 
 Deterministic validation:
 - `python -m unittest tests.test_relay_userhost -v` — 13 passed, 0 failed;
@@ -180,16 +180,24 @@ Deterministic validation:
 
 The ignored disabled-project CLI qualification used the approved `artifact-relay-manager` project identity in a disposable registry/config/state/workspace. It proved launcher startup, two supervisor cycles, metadata logging, and clean exit, without Drive, OAuth/DPAPI or Watcher activity. Separately, an enabled-project local injected-provider qualification exercised actual launcher and worker subprocesses with the existing supervisor, monitor and Relay paths. A simulated local observation produced two `OK` cycles, one acknowledged mock Watcher POST, and deduplication of the unchanged observation. A simulated Watcher 503 left the event pending; a fresh retry acknowledged the same event ID `relay-2bdb770d77c4f8103c7d03bc784789341273a22d2a80ace3d7ba0d27e4c65202`. The provider observation and in-memory token were simulated; there were no live Drive calls or OAuth/DPAPI accesses. Cooperative stop exited cleanly without force-kill, released both locks, and preserved state. Capped rotating logs omitted artifact body and non-ASCII fixture content. Evidence: ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/enabled-delivery-qualification.json`.
 
-Real Task Scheduler COM qualification used one temporary root task configured with the current user's `InteractiveToken`, Limited run level, no triggers, and `IgnoreNew`. COM and `schtasks` verified the exact task definition before one native COM `Run()` call. The disabled-project fixture logged exactly two `IDLE` cycles, exited with code 0, released both locks, left no launcher/worker process or Relay state, and made no Drive or Watcher calls or OAuth/DPAPI access. The marker-verified task was deleted and absence verified through both COM and `schtasks`. Evidence: ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/task-scheduler-com-qualification.json`.
+Initial Task Scheduler COM qualification used one temporary root task configured with the current user's `InteractiveToken`, Limited run level, no triggers, and `IgnoreNew`. It ran the disabled-project fixture for two `IDLE` cycles and exited with code 0; this initial run did not exercise Drive or DPAPI access. Its marker-verified task was deleted and absence verified through COM and `schtasks`. Historical evidence: ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/task-scheduler-com-qualification.json`.
 
 Earlier PowerShell ScheduledTasks/CIM queries failed with `0x80070002` for existing unrelated tasks while COM and `schtasks` found them. Both prior disposable tasks were `START_NOT_CALLED`, then deleted and verified absent; do not describe those attempts as launcher failures.
 
+### RELAY.WINDOWS.USERHOST.LIVE.1A qualification closure
+
+Architect accepted the bounded live task-context qualification. One temporary, manually started, triggerless Task Scheduler task ran under the current user's `InteractiveToken` at Limited run level with `IgnoreNew`, for at most two cycles. A fresh UserHost invocation ran against the approved test project and read-only Drive folder using the existing current-user DPAPI session and a local loopback mock Watcher. Cycle 1 delivered one designated raw artifact and persisted its acknowledgement; cycle 2 deduplicated the same artifact. The mock Watcher received exactly one POST. The artifact was Drive version `3`, 26 bytes, SHA-256 `839ffb1cf48ad91270f4a395847100e412501c823a63270162a56306b1cc8ecf`; event ID was `relay-02471a4ffcf9a90b6ee27824533420ebda3c7f3a93d13b1e88c6525438a76ae9`. Drive operations were read-only; no production Watcher was used. The existing protected OAuth session and Drive artifact were preserved.
+
+The exact ownership-marked task was deleted; COM and `schtasks` confirmed absence. The launcher exited with code 0, no worker remained, and both locks were free. Sanitized evidence: ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.LIVE.1A/evidence/task-context-20261010-011100-bdcc22d8/qualification.json`.
+
+Earlier PowerShell ScheduledTasks/CIM query-layer calls failed with `0x80070002` while enumerating unrelated existing tasks; this was separate from launcher execution. Native COM and `schtasks` successfully found and verified the relevant tasks.
+
 Limitations and unqualified behavior:
-- No live Drive calls, browser OAuth, refresh/reset of protected credentials, SCM operation, or Windows account/policy change occurred.
-- The Scheduler qualification was one manually started disposable task with all projects disabled; it does not qualify actual enabled task-context event delivery, an automatic logon trigger, pre-login or after-sign-out operation, Task Scheduler restart after failure, clean sign-out behavior, or task-context DPAPI access.
-- Current-user sign-in is required. This is not a service available before sign-in or after sign-out. No persistent scheduled task exists; the UserHost remains opt-in and is not deployed or configured for auto-start. Do not use S4U or store a Windows password.
-- Windows Service support remains unimplemented and unqualified. `windows-service-1a` remains a separate unmerged branch.
+- This was a manual no-trigger qualification, not deployment of a persistent task or automatic startup at sign-in.
+- Automatic startup at Windows sign-in, operation before sign-in or after sign-out, clean sign-out behavior, and Task Scheduler crash/restart recovery remain unqualified. No claim of logged-out availability is made.
+- Windows Service support remains unimplemented and unqualified. `windows-service-1a` is a separate branch.
+- No OAuth browser flow, credential reset, Drive mutation, production Watcher delivery, SCM operation, or Windows account/policy change occurred.
 - The offline launcher dry-run requires every configured registry project to be disabled and an explicit bounded cycle count.
 - Relay remains transport/monitor only; no project-Orchestrator authority was added.
 
-Sanitized two-cycle evidence is in ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/qualification.json`.
+Sanitized evidence is in ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/qualification.json`.

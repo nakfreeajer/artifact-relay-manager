@@ -117,7 +117,7 @@ Source/tests commit: `d3d6ba38d02c03a609ca5a62cd9fd8eaac41c303`.
 
 Final validation: 62/62 tests passed; compile checks, both existing CLI demos, monitor tests, and `git diff --check` passed.
 
-Limitations of `monitor-drive`: one configured project per process. The separate foreground supervisor executes enabled projects sequentially. The unmerged `windows-userhost-1a` branch adds an explicit per-user process host; it does not register Task Scheduler jobs and does not qualify task-context DPAPI, restart, stop, or sign-out behavior. No Windows Service is qualified. UI, outbound publishing, multi-provider framework, database, and project-Orchestrator authority remain outside this branch.
+Limitations of `monitor-drive`: one configured project per process. The separate foreground supervisor executes enabled projects sequentially. The per-user UserHost process host reuses that supervisor. A manual triggerless Task Scheduler qualification later proved task-context protected-session Drive reads, one acknowledged local mock Watcher delivery, and deduplication on the next cycle. It does not configure a persistent task. Automatic sign-in startup, sign-out behavior, and Scheduler crash/restart recovery remain unqualified. No Windows Service is qualified. UI, outbound publishing, multi-provider framework, database, and project-Orchestrator authority remain outside this branch.
 
 ## Fresh worktree bootstrap
 From the repository root:
@@ -134,7 +134,7 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 
 ## Handover boundary
 
-`RELAY.PROJECT.SUPERVISOR.1A` is implemented on `main` at source/tests commit `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`. `RELAY.WINDOWS.USERHOST.1A` was implemented on feature branch `windows-userhost-1a` from baseline `2b0e316ac347a769ce61b26fc6344528efeab168`, implementation commit `34ad80ed6110393500deabe19271f40a18d762d6`; its documentation closure was completed in commit `f5fe971c6f1bbe91bff607366a3cbce112850c18`. Architect accepted the feature with explicit limitations and approved strict fast-forward integration. The local enabled-project fixture delivery passed, and one disposable Task Scheduler COM qualification passed with all projects disabled; that exact task was removed. No persistent task exists. Task-context DPAPI/live Drive delivery and automatic logon behavior remain unqualified. Do not merge with a merge commit, tag, register another task, or start another milestone.
+`RELAY.PROJECT.SUPERVISOR.1A` is implemented on `main` at source/tests commit `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`. `RELAY.WINDOWS.USERHOST.1A` was implemented from baseline `2b0e316ac347a769ce61b26fc6344528efeab168` at `34ad80ed6110393500deabe19271f40a18d762d6`; its implementation and initial documentation closure were Architect-accepted. A later live qualification passed using one temporary triggerless task: two task-context supervisor cycles read the approved Drive artifact using the current-user protected session, delivered once to a local mock Watcher, and deduplicated on cycle 2. The exact task was ownership-verified, removed, and confirmed absent by COM and `schtasks`; no persistent task exists. Automatic sign-in startup, sign-out behavior, Scheduler crash/restart recovery, and Windows Service operation remain unqualified. See `docs/VALIDATION.md` and `docs/WINDOWS_USERHOST.md` for evidence and limits.
 
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.
