@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "artifact-relay-manager"
+version = "0.1.0"
+description = "Deterministic artifact transport and monitoring for project Watchers"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+py-modules = [
+    "drive_adapter",
+    "drive_auth",
+    "drive_monitor",
+    "drive_session",
+    "project_registry",
+    "project_supervisor",
+    "relay",
+    "relay_projects",
+    "relay_supervisor",
+    "relay_windows_service",
+]

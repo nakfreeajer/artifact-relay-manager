@@ -9,7 +9,10 @@ Deterministic lifecycle coverage:
 - service startup uses `DriveAuthSession` only; it has no browser OAuth path.
 
 Validation results:
-- `python -m unittest discover -s tests -p test_relay_windows_service.py -v` — 3 passed, 0 failed;
+- `python -m unittest discover -s tests -p test_relay_windows_service.py -v` - 10 passed, 0 failed;
+- `python -m unittest discover -s tests -v` - 107 passed, 0 failed;
+- `python -m py_compile relay.py drive_adapter.py drive_auth.py drive_session.py drive_monitor.py project_registry.py project_supervisor.py relay_supervisor.py relay_projects.py relay_windows_service.py tests/test_project_registry.py tests/test_project_supervisor.py tests/test_relay_windows_service.py` - passed;
+- `git diff --check` - passed;
 - `python -m unittest discover -s tests -v` — 100 passed, 0 failed;
 - `python -m py_compile project_supervisor.py relay_windows_service.py tests/test_relay_windows_service.py` — passed;
 - `git diff --check` — passed.
@@ -33,6 +36,20 @@ The Architect's elevated-qualification instruction was reread on 2026-10-09. Its
 The noninteractive process must have `RELAY_GDRIVE_OAUTH_CLIENT_FILE` set to the existing Desktop client file, use that service identity's `%LOCALAPPDATA%\ArtifactRelayManager\projects.json`, and run with the interpreter containing pywin32. pywin32 registers its Python service host; SCM's working directory is not configured by this adapter and normally defaults to the system service directory. Project config and state paths are canonical absolute paths, but module import and runtime behavior from that SCM working directory remain unqualified. The default registry is absent, so no approved test project/mock-Watcher configuration was prepared. The approved existing Artifact Relay Manager test project, Drive artifacts, and Relay state were not touched. No service was installed or started, no browser was launched, the protected OAuth session was not reset or refreshed, and Google Drive was not modified.
 
 Limitations: actual SCM process startup, supervisor operation under SCM, graceful SCM stop, and on-disk state preservation remain unqualified because service creation is denied to this non-elevated process. Interactive browser authorization is intentionally unavailable in service mode. No desktop UI, service management API, scheduler, database, provider framework, or project-Orchestrator workflow authority was added.
+
+### Deployment wiring correction
+
+Validation on the correction draft:
+- `python -m unittest discover -s tests -p test_relay_windows_service.py -v` - 10 passed, 0 failed;
+- `python -m unittest discover -s tests -v` - 107 passed, 0 failed;
+- `python -m py_compile relay.py drive_adapter.py drive_auth.py drive_session.py drive_monitor.py project_registry.py project_supervisor.py relay_supervisor.py relay_projects.py relay_windows_service.py tests/test_project_registry.py tests/test_project_supervisor.py tests/test_relay_windows_service.py` - passed;
+- `git diff --check` - passed;
+- isolated `pip install --user --no-deps .` into a temporary `PYTHONUSERBASE` - passed; a fresh interpreter from `%WINDIR%\System32` imported the installed service and supervisor modules from that isolated user site without `PYTHONPATH`;
+- the deterministic subprocess regression stages modules listed in `pyproject.toml` into an isolated user site and imports from an SCM-like system working directory;
+- the installed `pythonservice.exe` path resolves beside `win32service.pyd`; ARM does not invoke pywin32 default relocation;
+- `python relay_windows_service.py install` is blocked before SCM access with the LocalSystem warning; read-only `sc.exe query ArtifactRelayManager` confirms no service is registered;
+
+The service uses `%ProgramData%\ArtifactRelayManager\service.json` for explicit registry and OAuth client paths. It validates the service config and registry before constructing the auth session. The OAuth file path is exposed only through a process-local `RELAY_GDRIVE_OAUTH_CLIENT_FILE` value during service execution; `LOCALAPPDATA` is not changed. The adapter points pywin32 at the already-installed adjacent `pythonservice.exe` and does not call the relocating default resolver. Missing host fails closed. Registration `install` and `update` commands are blocked to prevent pywin32's unspecified-account LocalSystem default. No SCM install/start/stop was performed; secure account registration remains NO-GO and requires future owner/Architect approval. No account, policy, credential, OAuth session, Google Drive, or production Relay state was modified.
 
 ## RELAY.PROJECT.SUPERVISOR.1A
 
@@ -172,6 +189,7 @@ Real read-only session qualification:
 - no Watcher delivery or Drive mutation occurred.
 
 The OAuth client JSON and protected session location/content are intentionally excluded from tracked evidence. The real protected session remains in the current Windows user's local application data.
+
 
 ## RELAY.PROJECT.SUPERVISOR.1A live qualification closure
 
