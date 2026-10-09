@@ -2,7 +2,7 @@
 
 Project: `artifact-relay-manager`
 
-Status: `RELAY.PROJECT.SUPERVISOR.1A` is implemented on branch `project-supervisor-1a`; it is not merged to `main`.
+Status: `RELAY.PROJECT.SUPERVISOR.1A` is implemented on `main` (source/tests commit `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`).
 
 `RELAY.PROJECT.REGISTRY.1A` adds a local schemaVersion 1 JSON registry at `%LOCALAPPDATA%\ArtifactRelayManager\projects.json` by default. Entries reference existing per-project Drive config and Relay state paths rather than duplicating configuration. Writes use a same-directory temporary file, flush/fsync, and atomic replace. Validation rejects project ID, canonical config/state path, configured workspace, and Drive folder collisions. `relay_projects.py` provides list/add/show/enable/disable/remove/validate operations. Registry operations validate local configuration and have no Drive, Watcher, OAuth/browser, or protected-session side effects.
 
@@ -113,4 +113,4 @@ Current limitations:
 - no database;
 - no project-Orchestrator workflow authority.
 
-`RELAY.WINDOWS.USERHOST.1A` is implemented on the unmerged `windows-userhost-1a` branch from main baseline `2b0e316ac347a769ce61b26fc6344528efeab168`, implementation commit `34ad80ed6110393500deabe19271f40a18d762d6`. Architect accepted it with explicit limitations. The per-user launcher reuses the accepted supervisor. A deterministic enabled-project local fixture qualification passed, and one temporary Task Scheduler COM task passed a disabled-project dry run; that exact task was deleted and its absence verified. No persistent task exists. Windows Service support, automatic logon trigger behavior, task-context live Drive/DPAPI delivery, and Orchestrator authority remain unqualified or out of scope. See `docs/WINDOWS_USERHOST.md` for its contract and `docs/VALIDATION.md` for qualification results.
+`RELAY.WINDOWS.USERHOST.1A` was implemented on feature branch `windows-userhost-1a` from main baseline `2b0e316ac347a769ce61b26fc6344528efeab168`, implementation commit `34ad80ed6110393500deabe19271f40a18d762d6`; its documentation closure is commit `f5fe971c6f1bbe91bff607366a3cbce112850c18`. Architect accepted it with explicit limitations and approved strict fast-forward integration. The per-user launcher reuses the accepted supervisor. A deterministic enabled-project local fixture qualification passed, and one temporary Task Scheduler COM task passed a disabled-project dry run; that exact task was deleted and its absence verified. No persistent task exists. Task-context DPAPI/live Drive delivery and automatic logon behavior remain unqualified; Windows Service support and Orchestrator authority are out of scope. See `docs/WINDOWS_USERHOST.md` for its contract and `docs/VALIDATION.md` for qualification results.
