@@ -96,7 +96,7 @@ Observed live prerequisite failure before PASS:
 
 Current limitations:
 - foreground supervisor is available and executes projects sequentially in one process;
-- Windows Service/background host and supervisor service-control integration are not implemented;
+- Windows Service/task registration remain unimplemented; the separate `windows-userhost-1a` branch adds a per-user process launcher but is not merged or yet Architect-accepted;
 - desktop UI and supervisor management API are not implemented;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;
@@ -113,4 +113,4 @@ Current limitations:
 - no database;
 - no project-Orchestrator workflow authority.
 
-No next implementation milestone is selected here; the Architect chooses the next bounded target before Executor work resumes.
+`RELAY.WINDOWS.USERHOST.1A` is implemented and deterministically validated on the unmerged `windows-userhost-1a` branch from main baseline `2b0e316ac347a769ce61b26fc6344528efeab168`; it is awaiting Architect review. It adds only a per-user launcher around the accepted supervisor. Task Scheduler registration, Windows Service changes, and Orchestrator authority are out of scope. See `docs/WINDOWS_USERHOST.md` for its contract and `docs/VALIDATION.md` for qualification status.

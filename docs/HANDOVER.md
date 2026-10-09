@@ -117,7 +117,7 @@ Source/tests commit: `d3d6ba38d02c03a609ca5a62cd9fd8eaac41c303`.
 
 Final validation: 62/62 tests passed; compile checks, both existing CLI demos, monitor tests, and `git diff --check` passed.
 
-Limitations of `monitor-drive`: one configured project per process. The separate foreground supervisor executes enabled projects sequentially. Monitoring remains foreground only, with no Windows Service/background startup, UI, outbound publishing, multi-provider framework, database, or project-Orchestrator authority.
+Limitations of `monitor-drive`: one configured project per process. The separate foreground supervisor executes enabled projects sequentially. The unmerged `windows-userhost-1a` branch adds an explicit per-user process host; it does not register Task Scheduler jobs and does not qualify task-context DPAPI, restart, stop, or sign-out behavior. No Windows Service is qualified. UI, outbound publishing, multi-provider framework, database, and project-Orchestrator authority remain outside this branch.
 
 ## Fresh worktree bootstrap
 From the repository root:
@@ -134,8 +134,8 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 
 ## Handover boundary
 
-RELAY.PROJECT.SUPERVISOR.1A completes the foreground sequential multi-project supervisor. No next implementation milestone is authorized by this handover. The Architect must choose the next bounded target before Executor work resumes.
+RELAY.PROJECT.SUPERVISOR.1A completes the foreground sequential multi-project supervisor. The selected follow-on `RELAY.WINDOWS.USERHOST.1A` is on the unmerged `windows-userhost-1a` branch from `2b0e316ac347a769ce61b26fc6344528efeab168` and stops for Architect review after bounded validation. Do not merge, register a scheduled task, or start another milestone before that review.
 
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.
-- Do not add a scheduler/workflow engine, UI, service management API, outbound publishing, provider framework, database, or Windows Service unless explicitly selected in a future bounded milestone.
+- Do not add a scheduler/workflow engine, UI, service management API, outbound publishing, provider framework, database, Windows Service, or Task Scheduler registration unless explicitly selected in a bounded milestone. The per-user launcher is a process host only; Relay still transports and monitors while the Watcher decides.

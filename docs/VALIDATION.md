@@ -166,3 +166,25 @@ Live monitor qualification:
 - one stable event ID was present for the designated file/version and the local mock Watcher received it once;
 - the monitor reused the existing protected session, emitted no authorization prompt, and did not open browser OAuth;
 - Drive requests were read-only; no Drive content was created, modified, renamed, moved, or deleted.
+
+## RELAY.WINDOWS.USERHOST.1A
+
+Implemented on the unmerged `windows-userhost-1a` branch from `2b0e316ac347a769ce61b26fc6344528efeab168`. The per-user launcher starts the existing `project_supervisor.run_supervisor` implementation in a bounded child process, supplies an explicit local registry path and process-local OAuth client path, and leaves the foreground CLI unchanged. It validates absolute canonical paths, validates the project registry before launch, prevents log/control paths from aliasing runtime state, writes allowlisted metadata to capped rotating logs, holds parent and worker OS locks, checks that the parent process remains alive so a worker cannot remain orphaned after launcher failure, and supports an explicit cooperative stop request.
+
+Deterministic validation:
+- `python -m unittest tests.test_relay_userhost -v` — 13 passed, 0 failed;
+- `python -m unittest discover -s tests -v` — 110 passed, 0 failed;
+- `python -m py_compile relay_userhost.py tests/test_relay_userhost.py tests/userhost_cli_demo.py` — passed;
+- `python tests/userhost_cli_demo.py` — passed; two bounded `IDLE` cycles, loopback mock Watcher health returned HTTP 200, zero Watcher POSTs;
+- `git diff --check` — passed.
+
+The ignored CLI qualification used the approved `artifact-relay-manager` project identity in a disposable registry/config/state/workspace. The project was disabled for dry-run, so no Drive request, OAuth/DPAPI access, or Watcher delivery occurred. This proves launcher startup, two supervisor cycles, metadata logging, and clean exit only; it does not qualify event delivery.
+
+Limitations and unqualified behavior:
+- No live Drive calls, browser OAuth, refresh/reset of protected credentials, Task Scheduler registration, SCM operation, or Windows account/policy change occurred.
+- Actual enabled-project delivery through the launcher and a local mock Watcher was not run because the CLI has no deterministic mock-provider injection seam and live Drive qualification was not authorized by this milestone.
+- Task-context DPAPI access, Task Scheduler crash/restart policy, scheduler stop/logoff behavior, and sign-out behavior remain unqualified. Use a per-user `InteractiveToken` task only after a separate Architect-approved registration milestone; do not use S4U or store a Windows password.
+- The offline launcher dry-run requires every configured registry project to be disabled and an explicit bounded cycle count.
+- Relay remains transport/monitor only; no project-Orchestrator authority was added.
+
+Sanitized two-cycle evidence is in ignored `.agent-work/milestones/RELAY.WINDOWS.USERHOST.1A/evidence/qualification/qualification.json`.
