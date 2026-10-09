@@ -51,3 +51,7 @@ Subsequent live qualification used one temporary manually started, triggerless t
 This qualification does not cover an automatic logon trigger, pre-login or after-sign-out operation, clean sign-out behavior, or Task Scheduler crash/restart recovery. The UserHost requires the signed-in user's `InteractiveToken` and is not a machine service. Do not use S4U or store a Windows password. Earlier PowerShell ScheduledTasks/CIM queries failed with `0x80070002` for unrelated existing tasks; native COM and `schtasks` succeeded. The earlier two disposable attempts were not started and were removed. Keep any future restart policy finite and qualify stop/logoff behavior before relying on it.
 
 No persistent Task Scheduler task, SCM service, or Windows account policy was left changed. The protected OAuth session was not reset or removed and remained present and usable. Relay continues to transport and monitor; the Project Watcher / Orchestrator decides.
+
+### Logon definition qualification status
+
+On 2026-10-10, the exact temporary current-user `InteractiveToken`/Limited LogonTrigger definition was independently checked through native COM and `schtasks`. It remained disabled, was never run, and was removed with absence verified through both interfaces. Result: `PASS_DISABLED_LOGON_DEFINITION_QUALIFICATION`. This verifies only the task definition and cleanup. **Actual sign-in trigger activation remains NOT QUALIFIED.** A human-approved first sign-in test plan and its safeguards are recorded in `docs/VALIDATION.md`; no persistent task is configured.

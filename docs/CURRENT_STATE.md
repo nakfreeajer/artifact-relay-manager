@@ -96,7 +96,7 @@ Observed live prerequisite failure before PASS:
 
 Current limitations:
 - foreground supervisor is available and executes projects sequentially in one process;
-- no persistent Windows Service or Task Scheduler deployment is configured. The per-user UserHost launcher is Architect-accepted; its live manual Task Scheduler qualification proved task-context protected-session Drive reads, one local mock Watcher acknowledgement, and next-cycle deduplication. Automatic sign-in startup, sign-out behavior, and Scheduler crash/restart recovery remain unqualified;
+- no persistent Windows Service or Task Scheduler deployment is configured. The per-user UserHost launcher is Architect-accepted; its live manual Task Scheduler qualification proved task-context protected-session Drive reads, one local mock Watcher acknowledgement, and next-cycle deduplication. A separate disabled LogonTrigger definition qualification passed: the temporary task was never enabled or run and was removed. Actual sign-in trigger activation, sign-out behavior, and Scheduler crash/restart recovery remain unqualified;
 - desktop UI and supervisor management API are not implemented;
 - persistent OAuth session storage is Windows-only and tied to the current Windows user profile;
 - reset removes the local token but does not revoke authorization at Google;
@@ -114,3 +114,5 @@ Current limitations:
 - no project-Orchestrator workflow authority.
 
 `RELAY.WINDOWS.USERHOST.1A` was implemented at `34ad80ed6110393500deabe19271f40a18d762d6` from baseline `2b0e316ac347a769ce61b26fc6344528efeab168`; implementation and initial documentation closure were Architect-accepted. Subsequent live qualification used one temporary manually started triggerless task under the current user's `InteractiveToken`/Limited context. The existing protected session completed read-only Drive observation, one designated artifact was acknowledged by a local mock Watcher, and a second cycle deduplicated it. The ownership-verified task was removed and absence confirmed by COM and `schtasks`; no persistent task exists. Automatic sign-in startup, sign-out behavior, and Scheduler crash/restart recovery remain unqualified. Windows Service support and Orchestrator authority are out of scope. See `docs/WINDOWS_USERHOST.md` and `docs/VALIDATION.md`.
+
+`RELAY.WINDOWS.USERHOST.AUTOSTART.1A` definition qualification passed on 2026-10-10 (`PASS_DISABLED_LOGON_DEFINITION_QUALIFICATION`). One temporary current-user `InteractiveToken`/Limited LogonTrigger task was inspected through COM and `schtasks`, remained disabled and was never run, then was removed with absence confirmed through both interfaces. No persistent task remains. Actual sign-in trigger activation is explicitly **NOT QUALIFIED**; a human-approved lifecycle test plan is recorded in `docs/VALIDATION.md`.
