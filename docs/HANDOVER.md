@@ -139,3 +139,41 @@ python tools/bootstrap_agent_work.py --milestone <MILESTONE_ID>
 Architectural guardrails:
 - Relay transports and monitors; Watcher / Orchestrator decides.
 - Do not add a scheduler/workflow engine, UI, service management API, outbound publishing, provider framework, database, Windows Service, or persistent/automatic Task Scheduler deployment unless explicitly selected in a bounded milestone. The per-user launcher is a process host only; its one-shot manual Scheduler qualification did not add a persistent task. Relay still transports and monitors while the Watcher decides.
+
+
+## ARM Charter v1.0-RC1 adoption preparation (2026-10-13)
+
+This section records the human-approved ARM Charter v1.0-RC1 and its local documentation adoption authorized on 2026-10-13. CORE-07 raw outbound artifact publishing is mandatory Release 1 scope. The four-file candidate was prepared in ignored `.agent-work/milestones/ARM.CHARTER.1.0-RC1.DOCUMENTATION.PREPARATION/evidence/20261013/`, reviewed, and applied locally under the one-time authorization. Preparation itself made no tracked changes; this adoption is documentation-only and makes no claim of commit, push, or release.
+
+### Baseline and capability status
+
+Preparation was performed against `main` at `e5d7c288e87f500d9941b9728c7b88876d178a26`, also the locally recorded `origin/main` ref at inspection. The worktree was clean. The accepted bounded Google Drive → Relay → local mock Watcher qualification is present in main. CORE-01 through CORE-04 have accepted bounded implementations; CORE-05 is partial and unattended natural-sign-in/Scheduler/Service lifecycle is unqualified; CORE-06 desktop UI and CORE-07 outbound raw publishing are not implemented; CORE-08 has partial security/isolation controls but incomplete unattended lifecycle qualification. See `docs/PROJECT_BRIEF.md` for the Release 1 definition of done.
+
+The local `windows-userhost-1a` tip `7d4e806c8647f8c75d9f25b1404e220c28898049` is an ancestor of main, despite stale README language calling that work unmerged. The `windows-service-1a` tip `0b0b070ef3fdbc0bcda205a4f9c962618d3e4a20` is not an ancestor of main (merge base `2b0e316ac347a769ce61b26fc6344528efeab168`); do not describe Windows Service as deployed. The stale README statement is identified for a later bounded documentation correction; README is outside this four-file proposal.
+
+### AUTOSTART 1B authorization evidence and support-streak reconciliation
+
+The F47 report records `BLOCKED_PREFLIGHT` on 2026-10-13 and states that task registration and fresh authorization consumption did not occur. Inspection of retained ignored evidence found the F37 consumed marker at `evidence/AUTOSTART1B-20261011-LOGON-5F914FBB/registration-attempt-consumed.json`, SHA-256 `79df105818316e813b7ba5d71547705ff70562ba3458a1f7a1b5980fb38df7d1`, matching the recorded F39 reference. The F39 marker remains present with SHA-256 `4b39e3088519203941da310cfd37b5a1517884bb7e4adaa7a97ee9cf53c8a82e`. Some later F45/F46/F47 narrative described the F37 marker as absent; this conflicts with the inspected retained artifact. Neither marker was changed, reconstructed, reset, or consumed during this preparation. F48 read-only reconciliation remains pending.
+
+The Charter instruction says the two-consecutive-`BLOCKER` stop threshold has already triggered. Retained records include a F39 `BLOCKED_DEFINITION` result (23/25 definition checks) and F47 `BLOCKED_PREFLIGHT`. F40–F46 include offline, synthetic, and partial qualification work; current retained evidence does not establish that F39 and F47 were consecutive qualifying `BLOCKER` outcomes under one consistent ledger. Therefore the exact contiguous streak is **unresolved**. Preserve the conservative stop condition; do not reset the streak, declare it cleared, or invent a definitive count. F47 did not register or remove a Scheduler task in its attempt. No Scheduler action was performed for this documentation preparation.
+
+The recent F43–F47 work is qualification and planning, not accepted CORE capability progress. At least five milestones have elapsed without evidence of a newly accepted CORE capability; conduct the Charter’s five-milestone review before authorizing further supporting work.
+
+### Next-session guardrails
+
+- Local application of the reviewed four-file patch is complete under the bounded authorization. Commit or push requires separate Architect review; no such action is authorized here.
+- Keep CORE-07 in Release 1 minimum scope; read-only OAuth scope does not authorize upload. No scope change or credential operation is authorized here.
+- Preserve both consumed authorization records and the unresolved F37 narrative conflict. F48 remains pending.
+- No Scheduler registration, mutation, or execution; no UserHost runtime; no OAuth/DPAPI/Drive/Watcher operations or live monitoring were performed for this preparation.
+- Do not infer workflow meaning from artifact content or introduce Project-Orchestrator runtime authority into Relay.
+
+
+### Persistent five-milestone checkpoint record
+
+- **Most recent stage/result:** `ARM.CHARTER.1.0-RC1.DOCUMENTATION.ADOPTION`; the four documentation files were applied locally. No source change or product capability advancement.
+- **Independently verified CORE advancement since the prior checkpoint:** none established by this documentation-preparation stage.
+- **Continuous support-milestone streak:** threshold `TRIGGERED`; exact count/consecutiveness `UNCERTAIN`. Evidence source: the human-approved charter instruction says the two-or-more threshold is triggered; retained F39 `BLOCKED_DEFINITION` and F47 `BLOCKED_PREFLIGHT` records are separated by F40–F46 offline/synthetic/partial work without a consistent chronological ledger. Do not infer an exact streak or reset it.
+- **Five-milestone review:** `OVERDUE / DUE BEFORE ANY FURTHER SUPPORT WORK`. Last/next canonical milestone IDs are not reliably available in the retained ledger; do not fabricate them. Resolve against a source-backed milestone chronology at the checkpoint.
+- **Outstanding Human-approved exception:** the one-time bootstrap exception authorized preparation and local application of this reviewed four-file patch only; it is exhausted. It does not authorize commit, push, or further support work. No additional exception is recorded.
+- **AUTOSTART state:** F47 remains `BLOCKED_PREFLIGHT`; no task registration or fresh authorization consumption occurred. F48 remains pending read-only authorization-history reconciliation. F37/F39 consumed markers remain unchanged; no marker was reconstructed or reset.
+- **Stage boundary:** patch preparation and local documentation adoption only. This record asserts no Scheduler qualification, deployment completion, source merge, or CORE advancement.

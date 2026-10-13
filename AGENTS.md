@@ -36,3 +36,18 @@ Prefer GitHub, Google Drive, Google Sheets when needed, and local files before a
 
 ## Mutation rule
 One bounded milestone at a time. Preserve project isolation and fail closed on repository/project identity mismatch.
+
+
+## Charter alignment record
+
+## Active Architect pre-prompt gate (AMO v4.8 §37.2)
+
+Before **each proposed Executor prompt**, including during an uninterrupted conversation and after handover, the Architect freshly retrieves and verifies from the exact repository: official `AGENTS.md`, the human-approved canonical charter, `docs/HANDOVER.md`, and pertinent accepted decisions/evidence. The Architect records and verifies repository/project identity, source revision, charter revision, CORE target and precise definition-of-done gap, measurable expected result and evidence, why action is necessary now rather than deferrable or isolatable, classification (`CORE`, `BLOCKER`, `OPTIONAL`, or `DRIFT`), continuous support-milestone streak and next five-milestone checkpoint, applicable Human permission, authorized mutations, and STOP conditions. A prior session's checklist or an unchecked `CHARTER_CHECK=VERIFIED` assertion is not source verification.
+
+If a required source is inaccessible, stale, contradictory, or insufficient, HOLD/BLOCKED and issue **no executable Executor prompt**. The Executor independently rechecks the same authoritative sources and may return `BLOCKED_OBJECTIVE_DRIFT` or `PROJECT_ID_MISMATCH`. Every milestone records its CORE alignment and whether an independently verified original-product capability advanced. The human-owned charter and Release 1 commitments can be amended only by explicit Human approval. An independent Executor alignment challenge and strict repository/project isolation remain required.
+
+Two consecutive support-focused milestones—including blocker work, diagnostics, infrastructure, or qualification—without independently verified CORE capability advancement require STOP and Human choice, regardless of whether either milestone result was PASS or BLOCKED. Do not reset the continuous streak because milestones are renamed or separated, or because synthetic tests pass. A further exception requires new evidence, explicit Human choice and approval, and one bounded stopping condition. Historical streak count remains UNCERTAIN and the threshold TRIGGERED until a trustworthy ledger resolves it. This rule does not veto the one-time bootstrap exception authorizing preparation and local documentation adoption of this reviewed four-file patch; that exception authorizes no additional support work.
+
+Review and persist a five-milestone CORE progress checkpoint at least every five milestones; if overdue, STOP before further support work pending Human choice. Synthetic tests, qualification tooling, and documentation alone are not independently verified original-product capability advancement.
+
+These alignment checks do not override or weaken existing safety, protected-area, authorization, validation, or evidence requirements. When evidence is incomplete or conflicting, preserve the uncertainty and stop at the applicable safety gate.
