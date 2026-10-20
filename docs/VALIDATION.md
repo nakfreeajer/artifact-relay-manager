@@ -230,3 +230,16 @@ Validation commands/results:
 - `git diff --check` — passed.
 
 The offline fake validates configured metadata only; live Google Drive access, folder selection UI, monitoring, notifications, ACK/retry behavior, and Orchestrator integration are not qualified or implemented. See ignored `.agent-work/milestones/ARM.M01.TWO_FOLDER_CONFIG.1A/evidence/` for sanitized command evidence.
+
+## ARM.M03 — Two-folder Drive change detection (offline candidate)
+
+Baseline: M01 branch commit `158af8bcf42ce2e6edec2816de09259e438f9322`; implementation branch: `arm-v2-m03-dualfolder-detection-1a`.
+
+- `python -m unittest tests.test_drive_change_detector tests.test_project_registry tests.test_project_folder_config -v` — 41 passed, 0 failed.
+- `python -m unittest discover -s tests -v` — 131 passed, 0 failed.
+- `python tests/drive_change_cli_demo.py` — passed six fresh CLI invocations over two configured projects: initial baseline, create plus checksum-proven content edit, identical repeat, metadata rename/version increment, move/delete with nested child excluded, and fresh-process reload. Three stable events were persisted (two `PROMPT_CHANGED` for project A and one `REPORT_CHANGED` for project B); repeat and restart emitted no new events. The unproven move-in was recorded as ambiguous.
+- Changed-module `py_compile` — passed for `drive_change_detector.py`, `drive_adapter.py`, and both new test/demo modules.
+- `git diff --check` — passed.
+- Deterministic network guard passed; provider/server input was local JSON fixture only. No Google Drive calls, OAuth flow, protected-session access, APO, Watcher, Scheduler, Service, UserHost, Desktop Bridge, file-body reads, or live monitoring occurred. The inherited full regression suite ran its existing Windows DPAPI primitive round-trip test with disposable test text only; no credential or stored protected session was accessed.
+
+Limitations: list-only Drive metadata does not prove whether an item first observed in a configured folder was created there or moved there; production adapter therefore records ambiguity rather than a definite create event. Native Workspace files and binary files lacking `md5Checksum` do not qualify for content-change events. Fixture-proven creation exercises deterministic event behavior only and is not live provider qualification. No periodic/adaptive polling, M04 notification queue, ACK/retry, UI, or Orchestrator behavior was added.

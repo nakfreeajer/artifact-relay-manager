@@ -110,7 +110,7 @@ class DriveClient:
     def metadata(self, file_id: str) -> dict:
         encoded = urllib.parse.quote(file_id, safe="")
         return _safe_json(self.request("files/" + encoded, {
-            "fields": "id,name,mimeType,parents,trashed,version,size,capabilities(canDownload)",
+            "fields": "id,name,mimeType,parents,trashed,version,size,md5Checksum,createdTime,modifiedTime,webViewLink,capabilities(canDownload)",
             "supportsAllDrives": "true",
         }, 65536))
 
@@ -126,7 +126,7 @@ class DriveClient:
             params = {
                 "q": query,
                 "pageSize": "1000",
-                "fields": "nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed,version,size,capabilities(canDownload))",
+                "fields": "nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed,version,size,md5Checksum,createdTime,modifiedTime,webViewLink,capabilities(canDownload))",
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
             }
