@@ -1,5 +1,11 @@
 # Artifact Relay Manager — Agent Governance
 
+## ARM v2.0 M00 development-branch charter notice
+
+Human authorized one bounded documentation-only M00 correction on 2026-10-20. On this M00 branch, docs/PROJECT_BRIEF.md records the ARM v2.0 charter candidate and docs/DECISIONS.md records D01–D28. GitHub main retains historical v1.0-RC1 until separately authorized adoption; do not assert global activation by development-branch publication. v2.0 ARM monitors existing project root/Architect_Prompts and Executor_Reports and sends BOTH types of metadata-only events to ONE Orchestrator endpoint/project. ARM does not directly invoke ChatGPT Desktop Bridge, author prompts, upload files for v2 Release 1, or implement Orchestrator workflow decisions. Manual startup only. Preserve historical code and qualifications.
+
+The historical two-support-milestone STOP remains TRIGGERED and its count UNCERTAIN. Human's one-time M00 documentation exception expires upon verified documentation-only closure; it does not reset the STOP or authorize M01. Continue fresh preflight, independent alignment challenge and all protected-area controls. Sections below record pre-v2 governance history where applicable; specific v2 product objectives are determined by the versioned canonical charter on the current branch.
+
 ## Read first
 1. README.md
 2. docs/CURRENT_STATE.md

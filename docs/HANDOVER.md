@@ -1,5 +1,17 @@
 # Handover
 
+## ARM v2.0 M00 charter candidate — current status (2026-10-20)
+
+The Human approved all 28 v2.0 design decisions and explicitly authorized ONE M00 documentation-only support-STOP exception for a dedicated development branch. The v2 charter candidate is docs/PROJECT_BRIEF.md, with the full short-form decisions in docs/DECISIONS.md and approved detailed plan in the Google Doc: https://docs.google.com/document/d/1FVpU_vLLF43uFrU2O_KK1U6vO9_jwsR_aS-uDb9ry_4/edit.
+
+**Permanent intended v2 responsibility:** monitor changes to direct files in each existing project-named Drive root's Architect_Prompts and Executor_Reports subfolders; notify the configured single Orchestrator endpoint with metadata-only events; record receipt ACK/durable retry. Orchestrator alone selects/routs to Architect or Executor; ChatGPT Desktop Bridge is separate. No ARM-to-Bridge direct integration, workflow interpretation, or outbound Google Drive publishing in v2 Release 1. Keep existing qualified transport code and offline outbound prototype as unchanged legacy evidence.
+
+**M00 scope:** Four governance documentation files only on a dedicated development branch. No source/tests implementation, OAuth, live Drive, Desktop Bridge, Orchestrator, Scheduler/service/registry/firewall, protected-branch, release, force push or destructive work. GitHub main still publishes v1.0-RC1 until separately approved integration. Docs outside these four files and all existing source remain untouched; prior references to outbound upload or service startup are historical v1 design, not new v2 mandates.
+
+**Milestones:** M00 charter; M01 two-folder multi-project config; M02 UI; M03 Drive detection; M04 single-Orchestrator metadata notifications + durable ACK; early usable M01+M03+M04 simulated-Orchestrator checkpoint; M05 manual background host; M06 isolated simulated-then-authorized-real integration; M07 portable/installer and complete release. No M01 execution authorized.
+
+**Governance:** historical support STOP remains TRIGGERED, count UNCERTAIN, five-milestone checkpoint unresolved. The special M00 exception ends after verified documentation closure and does not advance product CORE. Before further work, separately obtain Human approval for the next bounded milestone. Fresh project/branch/charter verification remains mandatory. Read below as historical evidence of the previous implementation, not a v2 feature acceptance report.
+
 ## Repository
 `nakfreeajer/artifact-relay-manager`
 
