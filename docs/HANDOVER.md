@@ -21,6 +21,10 @@ Reusable Artifact Relay transport infrastructure.
 ## Governing boundary
 **Relay transports and monitors. Project Watcher / Orchestrator decides.**
 
+## ARM.M01 two-folder configuration
+
+A later, separately authorized M01 milestone is being executed on `arm-v2-m01-two-folder-config-1a` from `arm-v2-m00-charter-20261020` at `6280c5b5e7c26393924f365a00bd95764b364722`. The M00 statement above that no M01 execution was authorized records the earlier M00 boundary and is superseded only for this bounded M01 work. M01 extends the existing registry/CLI with offline two-folder project configuration. New records are isolated in `folderProjects`; the existing supervisor still consumes only legacy entries in `projects`. No Drive API, OAuth, Watcher, Orchestrator endpoint, monitoring or notification behavior is invoked or added. See `docs/VALIDATION.md` and ignored `.agent-work/milestones/ARM.M01.TWO_FOLDER_CONFIG.1A/evidence/`. No M02 work is authorized by this handover.
+
 This project deliberately omits project-Orchestrator internals.
 
 ## Accepted milestones

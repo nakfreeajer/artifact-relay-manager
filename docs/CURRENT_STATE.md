@@ -12,6 +12,10 @@ Supervisor source/tests commit: `fbee2f5bd97a7b5f252cccc6a81800c17ecbbd60`. Fina
 
 Registry source/tests commit: `6848633a69aba57b5b8f86596c5ccecce6d3c664`. Final deterministic validation passed: 82/82 tests; changed Python compile checks; both existing CLI demos; and `git diff --check`. The six-command local CLI qualification passed without Drive, Watcher, OAuth/browser, or protected-session access.
 
+## ARM.M01 two-folder configuration branch
+
+The dedicated `arm-v2-m01-two-folder-config-1a` branch extends the local registry with a schemaVersion 2 envelope that preserves legacy v1 operational entries in `projects` and stores v2 folder configuration records separately in `folderProjects`. This keeps the existing supervisor input limited to its legacy operational records; M01 does not add monitoring or delivery. Configuration stores project metadata, an existing canonical Drive root URL/ID, verified direct child IDs/URLs for `Architect_Prompts` and `Executor_Reports`, one Orchestrator endpoint, an optional secret-reference identifier, enablement metadata and revision. Provider validation is offline-only through a local deterministic fake. Legacy v1 registry files load without being rewritten and are upgraded only on a later explicit registry write. See the M01 record in `docs/VALIDATION.md` and ignored evidence under `.agent-work/milestones/ARM.M01.TWO_FOLDER_CONFIG.1A/evidence/`.
+
 Accepted Relay core:
 - exact-byte SHA-256 and byte length;
 - deterministic normalized event identity;

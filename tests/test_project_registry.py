@@ -47,7 +47,7 @@ class ProjectRegistryTests(unittest.TestCase):
         return proc
 
     def test_missing_registry_is_empty_without_creation(self):
-        self.assertEqual(self.registry.load(), {"schemaVersion": 1, "projects": []})
+        self.assertEqual(self.registry.load(), {"schemaVersion": 2, "projects": [], "folderProjects": []})
         self.assertFalse(self.registry_path.exists())
 
     def test_add_canonical_metadata_and_deterministic_serialization(self):
@@ -56,7 +56,8 @@ class ProjectRegistryTests(unittest.TestCase):
         self.assertTrue(first.endswith(b"\n"))
         document = json.loads(first)
         entry = document["projects"][0]
-        self.assertEqual(set(document), {"schemaVersion", "projects"})
+        self.assertEqual(set(document), {"schemaVersion", "projects", "folderProjects"})
+        self.assertEqual(document["schemaVersion"], 2)
         self.assertEqual(set(entry), {"projectId", "displayName", "configPath", "statePath", "enabled"})
         self.assertEqual(entry["configPath"], self.config_path.resolve().as_posix())
         self.assertEqual(entry["statePath"], self.state_path.resolve().as_posix())

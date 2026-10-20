@@ -215,3 +215,18 @@ Proposed first lifecycle test, requiring explicit human approval before task cre
 4. Disable and remove only this marker- and identity-verified task. Confirm absence through COM and `schtasks`, no matching process/lock remains, fixture state is unchanged, and no task persists. Record sanitized metadata only. If the trigger does not fire or cleanup cannot be proven, stop and report the exact outcome; do not add retries or broaden the test.
 
 Keep sign-out cleanup behavior, crash/restart recovery, and battery/sleep/wake behavior as separate future qualifications. They remain unqualified after the proposed first logon-trigger test. Do not persist or enable any scheduled task without the explicit human approval described above.
+
+## ARM.M01 two-folder project configuration
+
+Baseline: `arm-v2-m00-charter-20261020` at `6280c5b5e7c26393924f365a00bd95764b364722`. The M01 development branch adds a schemaVersion 2 registry envelope with legacy operational `projects` preserved separately from configuration-only `folderProjects`. It accepts standard Google Drive folder paths (`/drive/folders/<id>` and `/drive/u/<n>/folders/<id>`) and benign Drive `usp` link parameters, then emits canonical folder URLs. A deterministic local fake provider validates active root metadata and exactly one direct folder child named `Architect_Prompts` and `Executor_Reports`; root/child IDs are unique across configured projects and existing legacy roots. Remote endpoint syntax allows HTTPS, plus HTTP loopback only; no endpoint request is made. Optional repository/workspace and secret-reference identifier, enabled flag, and config revision are persisted. No tokens or file bodies are stored.
+
+Offline outcome qualification: two separate `relay_projects.py configure` invocations registered project A and B using one deterministic fake-provider fixture; `show` returned canonical root and child URLs/IDs; `validate --provider-fixture` checked both; fresh CLI `list` reloaded identical bindings. Both were stored with `enabled=false`. Negative tests cover missing/duplicate/wrong-MIME/trashed/mis-parented children, duplicate roots/overlap/workspaces, invalid Drive URLs and endpoint URLs, provider read failure, provider projectId mismatch, tampered IDs, corrupt legacy registry state, and non-destructive v1 load. The supervisor's existing `projects` input remains unchanged; no runtime monitoring was added.
+
+Validation commands/results:
+- `python -m unittest tests.test_project_registry tests.test_project_folder_config -v` — 30 passed, 0 failed;
+- `python -m unittest discover -s tests -v` — 120 passed, 0 failed;
+- `python -m py_compile project_registry.py relay_projects.py project_folder_config.py tests/test_project_registry.py tests/test_project_folder_config.py tests/project_config_cli_demo.py` — passed;
+- `python tests/project_config_cli_demo.py` — passed; A/B config, show, validation and fresh-process reload; zero Google Drive, OAuth, endpoint request or Watcher activity;
+- `git diff --check` — passed.
+
+The offline fake validates configured metadata only; live Google Drive access, folder selection UI, monitoring, notifications, ACK/retry behavior, and Orchestrator integration are not qualified or implemented. See ignored `.agent-work/milestones/ARM.M01.TWO_FOLDER_CONFIG.1A/evidence/` for sanitized command evidence.

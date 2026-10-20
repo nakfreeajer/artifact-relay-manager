@@ -8,9 +8,12 @@ import tempfile
 from pathlib import Path
 
 import drive_adapter
+import project_folder_config
 
 SCHEMA_VERSION = 1
 TOP_KEYS = {"schemaVersion", "projects"}
+CURRENT_SCHEMA_VERSION = 2
+CURRENT_TOP_KEYS = {"schemaVersion", "projects", "folderProjects"}
 ENTRY_KEYS = {"projectId", "displayName", "configPath", "statePath", "enabled"}
 
 
@@ -111,11 +114,67 @@ def _validate_projects(projects):
 
 
 def _validate_document(value):
-    if (not isinstance(value, dict) or set(value) != TOP_KEYS
-            or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != SCHEMA_VERSION):
+    if not isinstance(value, dict) or type(value.get("schemaVersion")) is not int:
         raise ProjectRegistryError("invalid registry schema")
-    projects = _validate_projects(value["projects"])
-    return {"schemaVersion": SCHEMA_VERSION, "projects": projects}
+    if value["schemaVersion"] == SCHEMA_VERSION and set(value) == TOP_KEYS:
+        projects = _validate_projects(value["projects"])
+        folder_projects = []
+    elif value["schemaVersion"] == CURRENT_SCHEMA_VERSION and set(value) == CURRENT_TOP_KEYS:
+        projects = _validate_projects(value["projects"])
+        folder_projects = _validate_folder_projects(value["folderProjects"], projects)
+    else:
+        raise ProjectRegistryError("invalid registry schema")
+    return {"schemaVersion": CURRENT_SCHEMA_VERSION, "projects": projects,
+            "folderProjects": folder_projects}
+
+
+def _validate_folder_projects(projects, legacy_projects):
+    if not isinstance(projects, list):
+        raise ProjectRegistryError("invalid two-folder projects value")
+    identities = {entry["projectId"] for entry in legacy_projects}
+    folder_ids = {_load_config(entry)["folderId"] for entry in legacy_projects}
+    workspaces = {_path_key(str(_load_config(entry)["_workspace"])) for entry in legacy_projects}
+    normalized = []
+    for item in projects:
+        try:
+            item = project_folder_config.validate_project(item, _MetadataOnlyProvider(item))
+        except Exception as exc:
+            raise ProjectRegistryError("invalid two-folder project config") from None
+        if item["projectId"] in identities:
+            raise ProjectRegistryError("duplicate project projectId")
+        identities.add(item["projectId"])
+        ids = {item["driveRootId"], item["architectPromptsFolderId"], item["executorReportsFolderId"]}
+        if len(ids) != 3 or ids & folder_ids:
+            raise ProjectRegistryError("duplicate project Drive folder identity")
+        if item["workspace"] is not None:
+            workspace_key = _path_key(item["workspace"])
+            if workspace_key in workspaces:
+                raise ProjectRegistryError("duplicate project workspace")
+            workspaces.add(workspace_key)
+        folder_ids.update(ids)
+        normalized.append(dict(item))
+    return sorted(normalized, key=lambda item: item["projectId"])
+
+
+class _MetadataOnlyProvider:
+    """Validate persisted config shape without granting provider/network access."""
+    def __init__(self, config):
+        self.config = config
+
+    def folder(self, item_id):
+        if item_id == self.config.get("driveRootId"):
+            return {"id": item_id, "mimeType": project_folder_config.FOLDER_MIME, "trashed": False}
+        raise project_folder_config.FolderConfigError("folder not found")
+
+    def children(self, root_id):
+        if root_id != self.config.get("driveRootId"):
+            return []
+        return [
+            {"id": self.config["architectPromptsFolderId"], "name": project_folder_config.PROMPTS_NAME,
+             "mimeType": project_folder_config.FOLDER_MIME, "parents": [root_id], "trashed": False},
+            {"id": self.config["executorReportsFolderId"], "name": project_folder_config.REPORTS_NAME,
+             "mimeType": project_folder_config.FOLDER_MIME, "parents": [root_id], "trashed": False},
+        ]
 
 
 class ProjectRegistry:
@@ -130,7 +189,7 @@ class ProjectRegistry:
 
     def load(self):
         if not self.path.exists():
-            return {"schemaVersion": SCHEMA_VERSION, "projects": []}
+            return {"schemaVersion": CURRENT_SCHEMA_VERSION, "projects": [], "folderProjects": []}
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
@@ -138,7 +197,9 @@ class ProjectRegistry:
         return _validate_document(value)
 
     def _write(self, projects):
-        document = _validate_document({"schemaVersion": SCHEMA_VERSION, "projects": projects})
+        current = self.load()
+        document = _validate_document({"schemaVersion": CURRENT_SCHEMA_VERSION, "projects": projects,
+                                      "folderProjects": current["folderProjects"]})
         data = (json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +222,56 @@ class ProjectRegistry:
 
     def list(self):
         return self.load()["projects"]
+
+    def list_folder_projects(self):
+        return self.load()["folderProjects"]
+
+    def show_folder_project(self, project_id):
+        for entry in self.list_folder_projects():
+            if entry["projectId"] == project_id:
+                return entry
+        raise ProjectRegistryError("projectId is not registered")
+
+    def configure_folder_project(self, *, project_id, display_name, root_url, prompts_id, reports_id,
+                                 endpoint, provider, repository=None, workspace=None, secret_ref=None,
+                                 enabled=False):
+        current = self.load()
+        if any(item["projectId"] == project_id for item in current["projects"] + current["folderProjects"]):
+            raise ProjectRegistryError("duplicate project projectId")
+        try:
+            config = project_folder_config.build_project(project_id, display_name, root_url, prompts_id,
+                reports_id, endpoint, provider, repository=repository, workspace=workspace,
+                secret_ref=secret_ref, enabled=enabled)
+        except project_folder_config.FolderConfigError as exc:
+            raise ProjectRegistryError(str(exc)) from None
+        _validate_document({"schemaVersion": CURRENT_SCHEMA_VERSION,
+                            "projects": current["projects"],
+                            "folderProjects": current["folderProjects"] + [config]})
+        document = {"schemaVersion": CURRENT_SCHEMA_VERSION, "projects": current["projects"],
+                    "folderProjects": sorted(current["folderProjects"] + [config], key=lambda item: item["projectId"])}
+        self._write_document(document)
+        return config
+
+    def _write_document(self, document):
+        data = (json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(prefix="." + self.path.name + ".", dir=self.path.parent)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temp_name, self.path)
+            except Exception:
+                try:
+                    os.unlink(temp_name)
+                except OSError:
+                    pass
+                raise
+        except OSError:
+            raise ProjectRegistryError("could not persist project registry") from None
+        return document
 
     def show(self, project_id):
         for entry in self.load()["projects"]:
@@ -202,3 +313,13 @@ class ProjectRegistry:
         if project_id is not None and not any(e["projectId"] == project_id for e in projects):
             raise ProjectRegistryError("projectId is not registered")
         return projects if project_id is None else [e for e in projects if e["projectId"] == project_id]
+
+    def validate_folder_projects(self, provider, project_id=None):
+        projects = self.list_folder_projects()
+        selected = projects if project_id is None else [e for e in projects if e["projectId"] == project_id]
+        if project_id is not None and not selected:
+            raise ProjectRegistryError("projectId is not registered")
+        try:
+            return [project_folder_config.validate_project(item, provider) for item in selected]
+        except project_folder_config.FolderConfigError as exc:
+            raise ProjectRegistryError(str(exc)) from None
