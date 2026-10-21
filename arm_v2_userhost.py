@@ -610,7 +610,17 @@ def status(config_path: Path) -> dict:
 
 def _emit(value: dict) -> int:
     print(json.dumps(value, sort_keys=True, separators=(",", ":")), flush=True)
-    return 0
+    outcome = value.get("result", value.get("status"))
+    if not isinstance(outcome, str):
+        return 2
+    if outcome in {"STARTED", "STOPPED", "RUNNING"}:
+        return 0
+    if outcome == "ALREADY_RUNNING":
+        return 3
+    if outcome == "STARTING":
+        return 1
+    # Unknown and degraded outcomes fail closed for shell callers.
+    return 2
 
 
 def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:

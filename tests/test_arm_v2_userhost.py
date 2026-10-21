@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 import os
 from pathlib import Path
 import subprocess
@@ -8,13 +10,36 @@ import sys
 import tempfile
 import unittest
 
-from arm_v2_userhost import UserHostError, _ensure_loopback_registry, _safe_cycle
+from arm_v2_userhost import UserHostError, _emit, _ensure_loopback_registry, _safe_cycle
 from project_folder_config import FakeDriveProvider
 from project_registry import ProjectRegistry
 from tests.test_arm_foreground import folder_fixture
 
 
 class ArmV2UserHostTests(unittest.TestCase):
+    def test_emit_preserves_json_and_maps_cli_outcomes_to_truthful_exit_codes(self):
+        cases = (
+            ({"result": "STARTED", "ready": True}, 0),
+            ({"result": "STOPPED"}, 0),
+            ({"status": "RUNNING"}, 0),
+            ({"status": "STOPPED"}, 0),
+            ({"result": "ALREADY_RUNNING"}, 3),
+            ({"status": "STARTING"}, 1),
+            ({"result": "START_FAILED"}, 2),
+            ({"result": "STOP_FAILED"}, 2),
+            ({"result": "STOP_TIMEOUT"}, 2),
+            ({"status": "DEGRADED"}, 2),
+            ({"result": "UNRECOGNIZED"}, 2),
+            ({"result": {"malformed": True}}, 2),
+        )
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                output = StringIO()
+                with redirect_stdout(output):
+                    actual = _emit(payload)
+                self.assertEqual(actual, expected)
+                self.assertEqual(json.loads(output.getvalue()), payload)
+
     def test_cycle_status_is_an_allowlist_and_drops_content_paths_urls_and_secrets(self):
         record = {
             "cycle": 7, "status": "OK", "observation": "SCANNED", "nextDelaySeconds": 10,

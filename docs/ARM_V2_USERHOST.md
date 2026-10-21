@@ -10,6 +10,8 @@ python arm_v2_userhost.py --config <same-config.json> stop
 
 `start` waits for the worker's first completed monitor cycle and then exits; the detached per-user worker continues on its own. `status` reads local heartbeat/ownership state only. `stop` requests a cooperative cycle-boundary shutdown and returns success only after the same worker has recorded `STOPPED`, released the OS lock and exited. The controller does not terminate a PID. A second start reports `ALREADY_RUNNING` while the same registry/detector/ledger identity is owned.
 
+CLI exit codes: `0` means the requested operation succeeded (including an already stopped worker) or status is healthy; `1` means status is informatively `STARTING`; `2` means start/stop failure, degraded status, invalid configuration/state, or an unknown outcome; `3` means `ALREADY_RUNNING`. The JSON result remains available on stdout and is not changed by this mapping. `_emit()` applies the same mapping to `result` or `status` outcomes and defaults unknown outcomes to failure code 2.
+
 ## M05 scope
 
 This milestone deliberately supports an offline fixture provider only. The current host accepts a canonical JSON config under `%LOCALAPPDATA%` with schema version 1, absolute current-user paths for the M01 registry, detector state, M04 notification ledger, and changing metadata fixture, a mapping of `test:` secret references to base64 encoded test-only HMAC keys, a 1–3600 second interval and a 1–60 second stop timeout. All configured Orchestrator destinations must be local `http` loopback endpoints. The host strips OAuth environment variables and rejects live secret references or non-loopback destinations.
