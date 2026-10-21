@@ -58,7 +58,9 @@ This entry records the human decision and bounded local documentation adoption. 
 
 **D10** — Global and per-project Start/Pause/Resume/Stop; preserve pending and config on pause.
 
-**D11** — Notify only direct-child new files and content updates, not rename/delete/move; surface folder errors.
+**D11** — After a silent initial baseline, notify on files newly arriving as direct children of configured watched folders, whether created/uploaded there or moved in, after bounded stable observation. In-folder rename, metadata-only version change, deletion, and nested membership alone do not notify; verified content updates remain eligible. Repeated scans/restarts do not duplicate an arrival occurrence. Incomplete, unstable, inaccessible, inconsistent or ambiguous results fail closed and surface an issue. Stability is a metadata-readiness heuristic, not proof of upload completion.
+
+**D11 supersession note — Human-authorized 2026-10-21:** The Human explicitly authorized replacing the prior “created in folder; moved-in ignored” rule with “newly arrived direct child; moved-in included.” This amendment supersedes the prior D11 sentence and its strict-origin implementation requirement. It does not change the historical M03.R1 result or claim that creation origin can be proven; historical R1 evidence remains intact.
 
 **D12** — Direct children only; no recursive monitoring.
 

@@ -55,10 +55,8 @@ def main():
             "socket.create_connection = blocked\n"
             "socket.socket.connect = blocked\n", encoding="utf-8")
 
-        def run(label, items, creations=()):
+        def run(label, items):
             fixture = {"folders": {folder: {"complete": True, "items": items.get(folder, [])} for folder in folders},
-                       "creationEvidence": [{"projectId": project, "folderId": folder, "fileId": file_id,
-                                             "kind": "CREATED_IN_FOLDER"} for project, folder, file_id in creations],
                        "fail": False}
             fixture_path.write_text(json.dumps(fixture, sort_keys=True), encoding="utf-8")
             environment = os.environ.copy()
@@ -72,6 +70,7 @@ def main():
             print(json.dumps({"step": label, "result": result["result"],
                               "newEventIds": [e["eventId"] for e in result["newEvents"]],
                               "newEventTypes": [e["eventType"] for e in result["newEvents"]],
+                              "changeKinds": [e["changeKind"] for e in result["newEvents"]],
                               "totalEvents": result["totalEvents"], "ambiguousCount": result["ambiguousCount"]},
                              sort_keys=True, separators=(",", ":")))
             return result
@@ -84,42 +83,57 @@ def main():
         updated["prompts-a"][0] = item("old-a", "prompts-a", 2, "1" * 32)
         updated["prompts-a"].append(item("new-prompt-a", "prompts-a", 1, "e" * 32))
         updated["reports-b"].append(item("new-report-b", "reports-b", 1, "f" * 32))
-        create = run("create-and-content-edit", updated,
-                     (("project-a", "prompts-a", "new-prompt-a"), ("project-b", "reports-b", "new-report-b")))
-        expected = [("project-a", "PROMPT_CHANGED", "CONTENT_UPDATED"),
-                    ("project-a", "PROMPT_CHANGED", "CREATED"),
-                    ("project-b", "REPORT_CHANGED", "CREATED")]
-        if [(e["projectId"], e["eventType"], e["changeKind"]) for e in create["newEvents"]] != expected:
-            raise AssertionError("event classification or two-project isolation mismatch")
-        stable_ids = {e["fileId"]: e["eventId"] for e in create["newEvents"]}
+        first = run("new-file-candidate-and-content-edit", updated)
+        if [(e["projectId"], e["eventType"], e["changeKind"]) for e in first["newEvents"]] != [
+                ("project-a", "PROMPT_CHANGED", "CONTENT_UPDATED")]:
+            raise AssertionError("content update changed or candidate notified before stability")
+        if first["candidateCount"] != 2:
+            raise AssertionError("new and moved-in files were not held as candidates")
 
-        repeated = run("repeat-identical-observation", updated,
-                       (("project-a", "prompts-a", "new-prompt-a"), ("project-b", "reports-b", "new-report-b")))
+        arrived = run("stable-new-and-moved-in-arrivals", updated)
+        expected = [("project-a", "PROMPT_CHANGED", "ARRIVED"),
+                    ("project-b", "REPORT_CHANGED", "ARRIVED")]
+        if [(e["projectId"], e["eventType"], e["changeKind"]) for e in arrived["newEvents"]] != expected:
+            raise AssertionError("arrival classification or two-project isolation mismatch")
+        first_arrival_ids = {e["fileId"]: e["eventId"] for e in arrived["newEvents"]}
+
+        repeated = run("repeat-identical-observation", updated)
         if repeated["newEvents"] or repeated["totalEvents"] != 3:
             raise AssertionError("repeat was not deduplicated")
 
         renamed = json.loads(json.dumps(updated))
         renamed["prompts-a"][0] = item("old-a", "prompts-a", 8, "1" * 32, "renamed.bin")
-        metadata = run("metadata-rename-version-only", renamed,
-                       (("project-a", "prompts-a", "new-prompt-a"), ("project-b", "reports-b", "new-report-b")))
+        metadata = run("metadata-rename-version-only", renamed)
         if metadata["newEvents"]:
             raise AssertionError("metadata-only change emitted an event")
 
-        moved_deleted = json.loads(json.dumps(base_items))
-        moved_deleted["prompts-a"] = [item("move-in-unproven", "prompts-a", 1, "9" * 32)]
-        moved = run("move-delete-nested-excluded", moved_deleted)
-        if moved["newEvents"]:
-            raise AssertionError("move/delete/nested snapshot emitted a definite event")
+        moved_out = json.loads(json.dumps(updated))
+        moved_out["reports-b"] = [x for x in moved_out["reports-b"] if x["id"] != "new-report-b"]
+        departure = run("observed-departure", moved_out)
+        if departure["newEvents"]:
+            raise AssertionError("departure emitted an event")
 
-        restarted = run("fresh-process-restart", moved_deleted)
-        if restarted["newEvents"] or restarted["totalEvents"] != 3:
+        reentry = json.loads(json.dumps(updated))
+        reentry_first = run("reentry-candidate", reentry)
+        if reentry_first["newEvents"]:
+            raise AssertionError("re-entry notified before stability")
+        reentered = run("stable-reentry", reentry)
+        b_arrival = next(e for e in reentered["newEvents"] if e["fileId"] == "new-report-b")
+        if b_arrival["changeKind"] != "ARRIVED" or b_arrival["eventId"] == first_arrival_ids["new-report-b"]:
+            raise AssertionError("re-entry did not get a distinct stable arrival identity")
+
+        restarted = run("fresh-process-restart", reentry)
+        if restarted["newEvents"] or restarted["totalEvents"] != 4:
             raise AssertionError("restart re-emitted events or lost persistent observations")
         persisted = json.loads(state.read_text(encoding="utf-8"))
-        if {e["fileId"]: e["eventId"] for e in persisted["events"]} != stable_ids:
-            raise AssertionError("persisted event identity changed across restart")
-        print(json.dumps({"demonstration": "PASS", "eventCount": 3, "freshProcessInvocations": 6,
+        ids = [e["eventId"] for e in persisted["events"]]
+        if len(ids) != len(set(ids)) or first_arrival_ids["new-report-b"] not in ids or b_arrival["eventId"] not in ids:
+            raise AssertionError("arrival identities were not durably distinct")
+        print(json.dumps({"demonstration": "PASS", "eventCount": 4, "freshProcessInvocations": 9,
                           "provider": "local-fixture", "networkCalls": 0, "networkGuard": "ENABLED", "bodyReads": 0,
-                          "eventIdentitiesStableAfterRestart": True}, sort_keys=True, separators=(",", ":")))
+                          "eventIdentitiesStableAfterRestart": True,
+                          "movedInArrival": "new-report-b", "reentryIdDistinct": True},
+                         sort_keys=True, separators=(",", ":")))
 
 
 if __name__ == "__main__":

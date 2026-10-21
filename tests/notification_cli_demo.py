@@ -53,21 +53,30 @@ def _registry_fixture():
     return {"items": items, "fail": False}
 
 
-def _provider_fixture(changed):
+def _provider_fixture(arrivals):
     folders = {}
     for suffix in ("a", "b"):
         for kind in ("prompts", "reports"):
             folder_id = f"{kind}-{suffix}"
             file_id = f"file-{kind}-{suffix}"
-            changed_item = changed and ((suffix == "a" and kind == "prompts")
-                                       or (suffix == "b" and kind == "reports"))
-            folders[folder_id] = {"complete": True, "items": [{
+            items = [{
                 "id": file_id, "name": f"fixture-{file_id}.txt", "mimeType": "text/plain",
-                "parents": [folder_id], "trashed": False, "version": "2" if changed_item else "1",
-                "md5Checksum": "b" * 32 if changed_item else "a" * 32,
+                "parents": [folder_id], "trashed": False, "version": "1", "size": "16",
+                "modifiedTime": "2026-10-21T00:00:00Z", "md5Checksum": "a" * 32,
                 "webViewLink": f"https://drive.google.com/file/d/{file_id}/view",
-            }]}
-    return {"folders": folders, "creationEvidence": [], "fail": False}
+            }]
+            is_arrival = arrivals and ((suffix == "a" and kind == "prompts")
+                                       or (suffix == "b" and kind == "reports"))
+            if is_arrival:
+                arrival_id = "arriving-prompt-a" if suffix == "a" else "moved-in-report-b"
+                items.append({
+                    "id": arrival_id, "name": f"{arrival_id}.txt", "mimeType": "text/plain",
+                    "parents": [folder_id], "trashed": False, "version": "5", "size": "23",
+                    "modifiedTime": "2026-10-21T00:00:05Z", "md5Checksum": "b" * 32,
+                    "webViewLink": f"https://drive.google.com/file/d/{arrival_id}/view",
+                })
+            folders[folder_id] = {"complete": True, "items": items}
+    return {"folders": folders, "fail": False}
 
 
 def main():
@@ -90,11 +99,16 @@ def main():
                     repository=f"owner/project-{suffix}", secret_ref=f"test:project-{suffix}", enabled=True)
             detector = DriveChangeDetector(registry_path, detector_path)
             detector.scan(FixtureProvider(_provider_fixture(False)))
-            created = detector.scan(FixtureProvider(_provider_fixture(True)))["newEvents"]
+            first_arrival_poll = detector.scan(FixtureProvider(_provider_fixture(True)))
+            assert first_arrival_poll["newEvents"] == []
+            assert first_arrival_poll["candidateCount"] == 2
+            created = DriveChangeDetector(registry_path, detector_path).scan(
+                FixtureProvider(_provider_fixture(True)))["newEvents"]
             assert len(created) == 2
             event_by_project = {event["projectId"]: event for event in created}
             assert event_by_project["project-a"]["eventType"] == "PROMPT_CHANGED"
             assert event_by_project["project-b"]["eventType"] == "REPORT_CHANGED"
+            assert all(event["changeKind"] == "ARRIVED" for event in created)
 
             # APO B durably accepts the report event, then drops the response.
             apo_b.drop_after_accept = 1
@@ -144,6 +158,7 @@ def main():
             print(json.dumps({"step": "duplicate_scan_restart", "result": duplicate,
                               "receiverRequestsUnchanged": before == after,
                               "finalStatus": {"pending": 0, "acked": 2, "total": 2},
+                              "acknowledgedChangeKind": "ARRIVED",
                               "externalNetwork": "BLOCKED_BY_CHILD_GUARD",
                               "googleDriveOAuthRealApoCdb": "NONE"}, sort_keys=True))
     return 0

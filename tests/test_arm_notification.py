@@ -33,7 +33,7 @@ def _folder_fixture():
     return {"items": items, "fail": False}
 
 
-def _change_fixture(changed=False):
+def _change_fixture(changed=False, arrivals=False):
     folders = {}
     for suffix in ("a", "b"):
         for kind in ("prompts", "reports"):
@@ -42,13 +42,22 @@ def _change_fixture(changed=False):
             old = "a" * 32
             checksum = ("b" if changed and (suffix == "a" and kind == "prompts"
                                                 or suffix == "b" and kind == "reports") else "a") * 32
-            folders[folder_id] = {"complete": True, "items": [{
+            items = [{
                 "id": file_id, "name": f"fixture-{file_id}.txt", "mimeType": "text/plain",
                 "parents": [folder_id], "trashed": False, "version": "2" if changed and checksum != old else "1",
-                "md5Checksum": checksum,
+                "size": "16", "modifiedTime": "2026-10-21T00:00:00Z", "md5Checksum": checksum,
                 "webViewLink": f"https://drive.google.com/file/d/{file_id}/view",
-            }]}
-    return {"folders": folders, "creationEvidence": [], "fail": False}
+            }]
+            is_arrival = arrivals and ((suffix == "a" and kind == "prompts")
+                                       or (suffix == "b" and kind == "reports"))
+            if is_arrival:
+                arrival_id = "arriving-prompt-a" if suffix == "a" else "moved-in-report-b"
+                items.append({"id": arrival_id, "name": arrival_id + ".txt", "mimeType": "text/plain",
+                    "parents": [folder_id], "trashed": False, "version": "3", "size": "23",
+                    "modifiedTime": "2026-10-21T00:00:05Z", "md5Checksum": "e" * 32,
+                    "webViewLink": f"https://drive.google.com/file/d/{arrival_id}/view"})
+            folders[folder_id] = {"complete": True, "items": items}
+    return {"folders": folders, "fail": False}
 
 
 class FakeClock:
@@ -104,6 +113,25 @@ class NotificationFixture(unittest.TestCase):
 
 
 class NotificationDeliveryTests(NotificationFixture):
+    def test_arrival_events_are_accepted_and_acknowledged_by_existing_m04_transport(self):
+        detector = DriveChangeDetector(self.registry_path, self.detector_path)
+        first = detector.scan(FixtureProvider(_change_fixture(True, arrivals=True)))
+        self.assertEqual(first["newEvents"], [])
+        self.assertEqual(first["candidateCount"], 2)
+        stable = detector.scan(FixtureProvider(_change_fixture(True, arrivals=True)))
+        arrivals = stable["newEvents"]
+        self.assertEqual({event["changeKind"] for event in arrivals}, {"ARRIVED"})
+        self.events.update({event["eventId"]: event for event in arrivals})
+        result = self.sender().dispatch()
+        self.assertEqual(result["ackedThisRun"], 4)
+        ledger = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        for event in arrivals:
+            entry = ledger["entries"][event["eventId"]]
+            self.assertEqual(entry["status"], "ACKED")
+            self.assertEqual(entry["receipt"]["eventId"], event["eventId"])
+            receiver = self.a if event["projectId"] == "project-a" else self.b
+            self.assertEqual(receiver.receipts["receipts"][event["eventId"]]["eventType"], event["eventType"])
+
     def test_two_projects_receive_only_their_event_types_and_matching_ack(self):
         result = self.sender().dispatch()
         self.assertEqual(result["ackedThisRun"], 2)
