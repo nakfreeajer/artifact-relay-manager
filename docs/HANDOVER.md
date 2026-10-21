@@ -216,13 +216,23 @@ Candidate branch: `arm-v2-m03r2-inbox-arrival-offline-1a`, baseline M04 `5ba294d
 
 The D11 product-policy amendment is recorded in `docs/PROJECT_BRIEF.md` and `docs/DECISIONS.md` with dated Human authority. R1's source finding is retained as historical evidence; origin is no longer a qualification requirement under amended D11. M03 live provider behavior, actual upload completion, native Workspace content updates and real APO interoperability remain unqualified. Historical support STOP remains `TRIGGERED`/`UNCERTAIN`; no M05 or other milestone is authorized.
 
-## ARM.M03.R3 handover ? foreground integration candidate
+## ARM.M03.R3 handover — published foreground integration
 
-- Local branch `arm-v2-m03r3-foreground-cycle-1a` starts at accepted R2 SHA `9a5990226ffb8d6c05d232bfb4d01e5fdbe3f484`.
+- Published branch `arm-v2-m03r3-foreground-cycle-1a` is at `3a7605e99bf75093234fbbc074910ea6b958ecec`, based on accepted R2 SHA `9a5990226ffb8d6c05d232bfb4d01e5fdbe3f484`.
 - `arm_foreground.py` composes M01/M03.R2/M04 via injected provider and secret resolver. `run(max_cycles=...)` is bounded, sleeps between cycles, returns sanitized status, and preserves state when interrupted. No provider credentials are opened by this module.
 - Disabled project IDs are excluded from detector polling and sender dispatch. A selected detector scan is atomic across all enabled projects. If one listing fails, all selected projects report degraded; the detector state is unchanged and already persisted delivery work can still be retried. This deliberately favors batch integrity over same-cycle partial A progress.
 - M04's optional `per_project_limit` is opt-in; existing callers preserve prior behavior. R3 uses one send attempt/project/cycle.
 - Offline outcome command: `python tests/foreground_cycle_cli_demo.py`; existing `drive_change_cli_demo.py` and `notification_cli_demo.py` remain separate regressions.
 - Validation at this revision: focused M01/M03.R2/M04/R3 tests 72/72; full unittest discovery 162/162; changed modules compile; all three demos pass; `git diff --check` passes.
 - Raw sanitized report/evidence is ignored under `.agent-work/milestones/ARM.M03.R3.FOREGROUND_CYCLE.1A/evidence/`.
-- No commit or push: branch is labeled proposed in the Executor instruction, which requires separate explicit D26 publication approval. Keep this worktree and original M01?M04 worktrees untouched; stop for Architect review and await Human publication authorization.
+- Human D26 publication authorization was subsequently added to the updated M03.R3 instruction. One ordinary non-force push published the single R3 commit; no merge or tag occurred. The R3 implementation remains offline-only and is not wired to live OAuth/Drive or production secret storage.
+
+## ARM.M05 Windows manual background host — offline candidate
+
+- **CORE advance:** add manual UI-independent process lifetime for the already accepted ARM v2 cycle. This remains within the ARM doorbell boundary and grants no Orchestrator workflow authority.
+- **Baseline/branch:** published R3 `3a7605e99bf75093234fbbc074910ea6b958ecec`; isolated worktree branch `arm-v2-m05-userhost-lifecycle-offline-1a`.
+- `arm_v2_userhost.py` composes the existing `ForegroundMonitor.cycle()` with a detached Windows worker and a minimal `start/status/stop` CLI. It reuses `relay_userhost.SingleInstanceLock` without editing v1. OS file locks, config/state identity, worker SID and process creation time gate ownership; stop requests are bound to the active worker instance and stop is reported only after verified process exit.
+- The real-process demo qualifies independent controller exit, a second/racing start refusal, graceful stop and restart recovery of a pending M04 event with the same ID. It also qualifies a worker-only abrupt-exit simulation and OS lock release, stale lock-file recovery, wrong-PID refusal, failed-start cleanup, disabled-project behavior, incomplete listing atomicity, and sanitized logs.
+- **Qualification boundary:** Windows process behavior was exercised on the current Windows host using only temporary M01 registries, synthetic Drive metadata files, test-only HMAC keys and two loopback simulated APOs. Production Drive/OAuth, real APO, production secret resolution, startup configuration, Task Scheduler and Windows Service are not implemented or exercised.
+- Historical governance remains unchanged: support STOP is `TRIGGERED` with exact count `UNCERTAIN`; the prior five-milestone support checkpoint is `OVERDUE`. M05 is the explicitly selected CORE product capability, not a claim that either governance record was reset. Human D26 authorization now permits one commit and ordinary push to the named M05 branch after refreshed validation; no merge, tag, or next milestone is authorized.
+- Operator and qualification details: `docs/ARM_V2_USERHOST.md`, `docs/VALIDATION.md`, append-only `docs/TEST_EVIDENCE_LEDGER.md`, and ignored `.agent-work/milestones/ARM.M05.WINDOWS.USERHOST.LIFECYCLE.1A/evidence/`.
