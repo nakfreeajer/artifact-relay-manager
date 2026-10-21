@@ -243,3 +243,21 @@ Baseline: M01 branch commit `158af8bcf42ce2e6edec2816de09259e438f9322`; implemen
 - Deterministic network guard passed; provider/server input was local JSON fixture only. The M03 detector and CLI made no Google Drive/OAuth/protected-session, APO, or Watcher calls; the CLI network guard was enabled. The inherited full regression suite did run deterministic loopback mock Watcher tests and its existing Windows DPAPI primitive round-trip with disposable test text; it contacted no external endpoint and accessed no credential or stored session. Scheduler, Service, UserHost, Desktop Bridge, file-body reads, and live monitoring: none.
 
 Limitations: list-only Drive metadata does not prove whether an item first observed in a configured folder was created there or moved there; production adapter therefore records ambiguity rather than a definite create event. Native Workspace files and binary files lacking `md5Checksum` do not qualify for content-change events. Fixture-proven creation exercises deterministic event behavior only and is not live provider qualification. No periodic/adaptive polling, M04 notification queue, ACK/retry, UI, or Orchestrator behavior was added.
+
+## ARM.M04 simulated Orchestrator notification and ACK (offline candidate)
+
+Baseline: `arm-v2-m03-dualfolder-detection-1a` at `7e9fe693492b7ff71cd10bed81bba52045585bd6`; branch: `arm-v2-m04-apo-ack-offline-1a`.
+
+Validation commands, exact attempted/pass/fail/skip totals, compile result, demo output, and commit SHA are in the appended M04 entry of `docs/TEST_EVIDENCE_LEDGER.md` and the sanitized ignored evidence report. Scope is offline only: two M01 folderProjects records, persisted M03 metadata events, and two deterministic loopback receiver instances. The demo launches a fresh sender Python process per dispatch and enforces a child-process loopback-only socket guard. No public network or Google Drive connection is used.
+
+Latest local validation:
+- `python -m unittest tests.test_arm_notification -v` — 16 run, 16 passed, 0 failed, 0 skipped.
+- `python -m unittest tests.test_project_registry tests.test_project_folder_config tests.test_drive_change_detector tests.test_arm_notification -v` — 57 run, 57 passed, 0 failed, 0 skipped.
+- `python -m unittest discover -s tests -v` — 147 run, 147 passed, 0 failed, 0 skipped.
+- `python -m py_compile arm_notification.py tests/test_arm_notification.py tests/mock_apo.py tests/notification_cli_demo.py` — passed.
+- `python tests/notification_cli_demo.py` — passed in three fresh sender processes; two events delivered/ACKed, one accept-then-timeout replayed with the same event ID, receiver unique processing remained one per event, and final duplicate invocation made zero requests.
+- `git diff --check` — passed.
+
+The full inherited offline suite includes deterministic auth/session coverage and a Windows DPAPI primitive test with disposable test material. No stored OAuth/DPAPI session or live credential was accessed. M04 receiver traffic was loopback-only and the sender child guard blocked non-loopback socket connections.
+
+Claims are limited to simulated transport behavior. The M03 source-event identity, project/folder mapping, enabled status, endpoint binding, request authentication, matching signed receipt ACK, atomic pending/attempt persistence, retry deadlines, restart recovery, dedupe, and isolation are exercised offline. Real APO compatibility, production secret resolution/rotation, remote HTTPS deployment, live Drive monitoring, live new-file creation proof, and workflow effects remain unqualified.
