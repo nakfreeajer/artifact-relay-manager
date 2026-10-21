@@ -274,9 +274,12 @@ class NotificationSender:
             raise NotificationError("INVALID_ACK_AUTHENTICATION")
         return ack, signature
 
-    def dispatch(self, *, limit=100):
+    def dispatch(self, *, limit=100, per_project_limit=None):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise NotificationError("dispatch limit must be between 1 and 100")
+        if (per_project_limit is not None
+                and (type(per_project_limit) is not int or not 1 <= per_project_limit <= 100)):
+            raise NotificationError("per-project dispatch limit must be between 1 and 100")
         registry = self.registry.load()
         source_events = self._source(registry)
         ledger = _read_ledger(self.ledger_path)
@@ -287,6 +290,7 @@ class NotificationSender:
 
         # Persist every new intent in the selected batch before any network side effect.
         selected = []
+        selected_per_project = {}
         next_ledger = json.loads(json.dumps(ledger))
         attempted = acked = pending = deduplicated = deferred = 0
         for event_id in sorted(source_events):
@@ -308,7 +312,11 @@ class NotificationSender:
             elif entry["nextAttemptAt"] is not None and entry["nextAttemptAt"] > now:
                 deferred += 1
             else:
+                if (per_project_limit is not None
+                        and selected_per_project.get(project["projectId"], 0) >= per_project_limit):
+                    continue
                 selected.append((event_id, project))
+                selected_per_project[project["projectId"]] = selected_per_project.get(project["projectId"], 0) + 1
                 if len(selected) >= limit:
                     break
         if next_ledger != ledger:

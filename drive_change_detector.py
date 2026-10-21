@@ -294,9 +294,22 @@ class DriveChangeDetector:
             raise DetectionError("detector state path aliases project registry")
         self.writer = writer
 
-    def scan(self, provider):
+    def scan(self, provider, *, project_ids=None):
         registry = self.registry.load()
-        projects = registry["folderProjects"]
+        configured_projects = registry["folderProjects"]
+        if project_ids is None:
+            projects = configured_projects
+        else:
+            if (not isinstance(project_ids, (list, tuple, set, frozenset))
+                    or any(not isinstance(project_id, str) for project_id in project_ids)
+                    or len(set(project_ids)) != len(project_ids)):
+                raise DetectionError("invalid selected project set")
+            configured_by_id = {project["projectId"]: project for project in configured_projects}
+            if any(project_id not in configured_by_id or not configured_by_id[project_id]["enabled"]
+                   for project_id in project_ids):
+                raise DetectionError("selected project is missing or disabled")
+            selected = set(project_ids)
+            projects = [project for project in configured_projects if project["projectId"] in selected]
         # Read and validate every configured listing before any state transition.
         snapshots = []
         observed_bindings = {}
@@ -314,7 +327,7 @@ class DriveChangeDetector:
         state = _empty_state() if not self.state_path.exists() else _migrate_state(_json_load(self.state_path))
         # Verify persisted project/folder identity before deriving any output.
         configured = {(p["projectId"], p[k], event_type)
-                      for p in projects for k, (event_type, _) in FOLDER_EVENTS.items()}
+                      for p in configured_projects for k, (event_type, _) in FOLDER_EVENTS.items()}
         if any((v["projectId"], v["folderId"], v["eventType"]) not in configured for v in state["folders"].values()):
             raise DetectionError("persisted folder state does not match configured projects")
         if any((e["projectId"], e["folderId"], e["eventType"]) not in configured for e in state["events"]):

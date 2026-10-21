@@ -277,3 +277,24 @@ Validation results:
 - `git diff --check` — passed.
 
 All provider observations in these tests/demos are deterministic local fixtures. The only HTTP is loopback to simulated APO receivers with a non-loopback child-process network guard. No live Google Drive/API call, OAuth grant or stored session, real APO, Desktop Bridge, public network, or workflow authority was exercised. The full inherited suite includes mock auth tests and a DPAPI primitive round-trip with disposable test material; it did not access a stored credential/session. The stable metadata rule is an offline heuristic, not upload-completion proof. Actual Drive listing cadence/arrival behavior and native Workspace content updates remain unqualified.
+
+## ARM.M03.R3 foreground Drive-to-mock-APO cycle ? offline candidate
+
+Baseline: `arm-v2-m03r2-inbox-arrival-offline-1a` at `9a5990226ffb8d6c05d232bfb4d01e5fdbe3f484`; local branch `arm-v2-m03r3-foreground-cycle-1a`.
+
+Implementation adds a bounded foreground runner around accepted M01 `folderProjects`, M03.R2 detector, and M04 sender. Enabled projects share each detector pass. The detector's selected-project scan option prevents polling disabled projects while preserving state for unselected projects. Existing scan persistence is atomic across the selected set: an incomplete listing marks the enabled set degraded, leaves detector state byte-identical, and does not masquerade as an empty listing. The runner still dispatches pre-existing durable intents after scan failure. The M04 sender accepts an optional per-project attempt cap; R3 uses one event/project/cycle. Default M04 behavior is unchanged. Ten seconds is the nominal injected/configured cycle delay, not an end-to-end delivery guarantee; provider failures back off exponentially to a configured maximum.
+
+Validation commands/results:
+- `python -m unittest tests.test_project_registry tests.test_project_folder_config tests.test_drive_change_detector tests.test_arm_notification tests.test_arm_foreground -v` ? 72 run, 72 passed, 0 failures/errors/skips.
+- `python -m unittest discover -s tests -v` ? 162 run, 162 passed, 0 failures/errors/skips.
+- `python -m py_compile arm_foreground.py drive_change_detector.py arm_notification.py tests/test_arm_foreground.py tests/test_drive_change_detector.py tests/test_arm_notification.py tests/drive_change_cli_demo.py tests/notification_cli_demo.py tests/foreground_cycle_cli_demo.py` ? passed.
+- `python tests/drive_change_cli_demo.py` ? passed; nine fresh detector invocations and zero network/body reads.
+- `python tests/notification_cli_demo.py` ? passed; two loopback APOs, matching ACKs, same-ID retry and dedupe.
+- `python tests/foreground_cycle_cli_demo.py` ? passed; five recorded cycles across the foreground run and fresh monitor restart. Cycle 1: silent baseline and zero requests. Cycle 2: A `CONTENT_UPDATED`, event `m03-969d6872f34d03b1dc6b15f8b169745caf53bafbeacf7ebe6d006ec5ea16ee54`, ACKed. Cycle 3: A `ARRIVED/PROMPT_CHANGED`, `m03-ccdf09b56f60af21d3b10b621cbfe2980b8ac07cbe35731be1198bfc8987af9e`; B moved-in `ARRIVED/REPORT_CHANGED`, `m03-d20ab0b353254edc4e31ef3b960d152713bbca5f60d0d3aac0cb12f055f1f406`; A ACKed, B pending after receiver acceptance/timeout. Cycle 4 in a fresh monitor instance retried B with the same ID; receiver processed it once and ACK persisted. Cycle 5 incomplete B listing reported `DEGRADED_ATOMIC_SCAN`, left detector state byte-identical and caused no duplicate request. Final delivery status pending=0, ACKed=3.
+- `git diff --check` ? passed.
+
+Negative coverage includes malformed shared registry before provider/network access, disabled B not polled, incomplete B listing preserving atomic detector state while a preexisting A pending event retries, fair per-project dispatch cap, bounded backoff `[10,20,25,25]`, Ctrl+C persistence/restart, and all prior M01/M03.R2/M04 isolation, corruption, authentication, ACK, retry, and dedupe regressions. The full inherited offline suite includes mock OAuth/DPAPI regression cases using disposable test-only material; no stored session/credential was accessed.
+
+Limits: this is deterministic synthetic integration through injected metadata-provider and secret-resolver seams, not live Drive, OAuth, actual APO, Windows background, or production secret-resolution qualification. An enabled-project listing error blocks the whole current enabled scan batch because accepted M03 persists that scan atomically; existing durable notifications continue. No partial scanning refactor was attempted. The implementation grants no Orchestrator workflow authority.
+
+Publication: withheld. The R3 target branch is marked proposed; the instruction requires explicit D26 publication authority. No commit or push was performed.

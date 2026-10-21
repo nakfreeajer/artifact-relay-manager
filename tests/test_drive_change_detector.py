@@ -229,6 +229,36 @@ class DriveChangeDetectorTests(unittest.TestCase):
             self.detector.scan(snapshot(self.base(), incomplete=("reports-b",)))
         self.assertEqual(self.state.read_bytes(), before)
 
+    def test_selected_scan_polls_only_enabled_projects_and_preserves_other_state(self):
+        self.detector.scan(snapshot(self.base()))
+        before = json.loads(self.state.read_text(encoding="utf-8"))
+        document = json.loads(self.registry.read_text(encoding="utf-8"))
+        document["folderProjects"] = [dict(project, enabled=(project["projectId"] == "project-a"))
+                                      for project in document["folderProjects"]]
+        self.registry.write_text(json.dumps(document), encoding="utf-8")
+
+        class RecordingProvider:
+            def __init__(self, items):
+                self.inner = snapshot(items)
+                self.calls = []
+
+            def list_folder(self, folder_id):
+                self.calls.append(folder_id)
+                return self.inner.list_folder(folder_id)
+
+        provider = RecordingProvider(self.base())
+        result = self.detector.scan(provider, project_ids=["project-a"])
+        self.assertEqual(set(provider.calls), {"prompts-a", "reports-a"})
+        self.assertEqual(result["newEvents"], [])
+        after = json.loads(self.state.read_text(encoding="utf-8"))
+        b_before = {key: value for key, value in before["folders"].items()
+                    if value["projectId"] == "project-b"}
+        b_after = {key: value for key, value in after["folders"].items()
+                   if value["projectId"] == "project-b"}
+        self.assertEqual(b_after, b_before)
+        with self.assertRaises(DetectionError):
+            self.detector.scan(provider, project_ids=["project-b"])
+
     def test_same_file_identity_cannot_bind_to_multiple_projects_or_folders(self):
         items = self.base()
         items["reports-b"].append(metadata("old-a", "reports-b", checksum="e" * 32))

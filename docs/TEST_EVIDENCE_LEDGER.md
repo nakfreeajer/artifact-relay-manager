@@ -54,3 +54,15 @@ Append-only milestone verification records. Detailed sanitized outputs remain in
 - No live Google Drive/API request, OAuth change or stored session access, real APO, Desktop Bridge, public network, Scheduler/Service/UserHost, or Orchestrator decision authority. Local fixture providers and loopback simulated receivers only. Inherited full-suite auth mocks and DPAPI primitive test used disposable test material only.
 - Limitations: live Drive listing behavior/timing, upload completion semantics, and native Workspace content updates are not qualified. Historical M03.R1 strict-origin evidence is preserved; the Human-approved D11 change removes origin as a requirement.
 - Evidence: ignored `.agent-work/milestones/ARM.M03.R2.D11_INBOX_ARRIVAL.1A/evidence/`.
+
+## ARM.M03.R3 ? Integrated foreground polling to simulated APO ? 2026-10-21
+
+- Baseline: `arm-v2-m03r2-inbox-arrival-offline-1a` at `9a5990226ffb8d6c05d232bfb4d01e5fdbe3f484`; local proposed branch `arm-v2-m03r3-foreground-cycle-1a`.
+- Focused M01/M03.R2/M04/R3 suite: 72 run, 72 passed, 0 failed, 0 errors, 0 skipped. Full discovery: 162 run, 162 passed, 0 failed, 0 errors, 0 skipped.
+- Changed-source/test/demo `py_compile` passed. Existing M03 detector CLI and M04 notification CLI demos passed. New `python tests/foreground_cycle_cli_demo.py` passed with loopback-only network guard. `git diff --check` passed.
+- Integrated cycles: baseline emitted 0 events and 0 requests; the A prompt checksum edit emitted `CONTENT_UPDATED` and was ACKed; after stable scans A prompt arrival emitted `ARRIVED/PROMPT_CHANGED` event `m03-ccdf09b56f60af21d3b10b621cbfe2980b8ac07cbe35731be1198bfc8987af9e`; B moved-in report emitted `ARRIVED/REPORT_CHANGED` event `m03-d20ab0b353254edc4e31ef3b960d152713bbca5f60d0d3aac0cb12f055f1f406`.
+- B receiver durably accepted its event and dropped the response. A fresh monitor instance retried the identical event ID after bounded delay, received the matching signed ACK, and receiver unique processing stayed one. Final status: pending=0, ACKed=3; no extra duplicate requests.
+- Incomplete B listing left detector-state bytes unchanged and marked the enabled scan batch degraded; already persisted A work safely retried. Separate tests prove disabled B is not polled, per-project delivery cap gives B progress behind multiple A events, backoff remains bounded, Ctrl+C preserves restart state, and malformed registry blocks before I/O.
+- No live Google Drive/OAuth/DPAPI session, real APO, public network, Desktop Bridge, Windows background host, or workflow authority. Local fixture provider and test-only keys; two deterministic loopback APOs only.
+- Atomicity limitation: existing detector scans all selected enabled projects in one transaction; one failed listing blocks new observations for the batch until a later successful scan, but does not clear state or suppress retries of already persisted events.
+- No commit/push: explicit D26 publication authorization was not included; proposed branch publication gate remains. Sanitized evidence is in ignored `.agent-work/milestones/ARM.M03.R3.FOREGROUND_CYCLE.1A/evidence/`.
