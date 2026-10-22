@@ -239,6 +239,13 @@ The D11 product-policy amendment is recorded in `docs/PROJECT_BRIEF.md` and `doc
 
 ## ARM.M02.1A Windows dashboard — offline candidate (2026-10-22)
 
+
 The earlier statement that no M02 work was authorized records the M00/M01 handover boundary and is superseded for this bounded Human-authorized CORE M02.1A candidate. The worktree is based on M05.R1 `7f51720f9b81ba99a3fc494d050249d8d680d4a0` on `arm-v2-m02a-windows-dashboard-offline-1a`. `arm_v2_dashboard.py` reuses the v2 registry and M05 fixture host, validates folder identities with a local FakeDriveProvider, presents metadata-only status/history, and controls only the accepted M05 CLI. It adds no Orchestrator authority, live provider path, pause semantics, service, scheduler, or startup behavior.
 
 Offline Windows Tk qualification and precise limitations are recorded in `docs/ARM_V2_DASHBOARD.md`, `docs/VALIDATION.md`, the appended `docs/TEST_EVIDENCE_LEDGER.md` record, and ignored `.agent-work/milestones/ARM.M02.1A.WINDOWS.DASHBOARD/evidence/`. This remains an uncommitted/unpublished local candidate pending independent Architect review; D26 publication permission was not established. Do not start M02.1B or live M06 as part of this candidate.
+
+## ARM.M02.1B Global and Per-Project Pause/Resume — offline candidate
+
+The isolated branch `arm-v2-m02b-runtime-pause-resume-offline-1a` starts from M02.1A `f9eef9d655eae98b4f1f2552cc269ac2e51c3bae`. It adds durable pause state, safe-boundary worker acknowledgement, global/per-project suppression of scan and dispatch, state-preserving stop/restart, CLI controls, and dashboard selection persistence across refresh. Pause is distinct from `enabled=false`; detector state and pending ACKs are retained. Corrupt/mismatched pause state fails closed.
+
+Qualification is recorded in `docs/VALIDATION.md`, the appended evidence ledger, and ignored `.agent-work/milestones/ARM.M02.1B.RUNTIME.PAUSE.RESUME/evidence/`. Human D26 authorized one commit and one ordinary non-force push to this exact development branch after refreshed qualification. The implementation is published on the isolated branch for independent Architect review; no main merge, tag, or release occurred. Historical support STOP remains TRIGGERED/count UNCERTAIN; the checkpoint remains OVERDUE.

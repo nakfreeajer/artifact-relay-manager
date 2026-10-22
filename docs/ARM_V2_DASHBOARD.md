@@ -23,17 +23,12 @@ The M05 config and all host inputs must satisfy the existing current-user LocalA
 - Closing the UI never calls stop. A later dashboard process reads the same host status and can invoke Start; the M05 host reports `ALREADY_RUNNING` without creating a second worker. Stop delegates to the existing cooperative M05 stop operation.
 - The window prominently identifies itself as `FIXTURE / OFFLINE ONLY — NOT LIVE DRIVE / APO`.
 
-## Pause semantics proposal for M02.1B review
+## M02.1B pause/resume offline candidate
 
-Pause and Resume are intentionally absent from M02.1A. The proposed semantics, pending Architect review and a separate bounded CORE implementation, are:
+The dashboard exposes Pause All/Resume All and Pause Selected/Resume Selected. It shows `Enabled` and `Paused` independently; pausing never rewrites registry enablement. A selected-project refresh preserves selection and detail state as rows update across refreshes. Control results distinguish an acknowledged safe-boundary application from a still-pending timeout. Global pause keeps the detached worker alive with heartbeats and suppresses all scans/sends; per-project pause suppresses that project's scans and dispatch while peers continue. Stop/restart retains pause state. Pending notification IDs and detector state are not rebaselined; Resume permits normal observation and safe retry.
 
-- Global Pause keeps the worker and truthful host status alive, then freezes scans and dispatch at a safe cycle boundary; configuration and pending work remain durable.
-- Global Resume continues from the same persisted detector/notification state without rebaselining.
-- Per-project Pause suppresses scans and sends for that project while other projects continue; the project's config, event history and pending work remain durable.
-- Stop exits the host cleanly. An in-flight transport follows M04 at-least-once semantics and is never shown as ACKed without a verified matching receipt.
-
-No pause buttons or implied `enabled=false` semantics are presented in this slice.
+This is the offline Windows Tk and detached fixture-worker implementation published on `arm-v2-m02b-runtime-pause-resume-offline-1a`. It does not qualify live Drive/APO operation or complete M02/Release 1. Qualification details and limits are in `docs/VALIDATION.md`.
 
 ## Qualification boundary and limits
 
-Qualification uses a visible Windows Tk window, temporary two-project M01 registry and folder fixture, the accepted detached M05 fixture worker, and two deterministic loopback simulated APO receivers. It does not qualify live Google Drive, OAuth/DPAPI, real Orchestrator interoperability, production secret resolution, a Windows service/task, installer, startup, pause/resume, or complete M02/M07 behavior. Relay remains transport-only; no project-Orchestrator workflow authority is present.
+The M02.1A qualification above used a visible Windows Tk window, temporary two-project M01 registry and folder fixture, the accepted detached M05 fixture worker, and two deterministic loopback simulated APO receivers. It did not qualify pause/resume at that revision. M02.1B pause/resume is qualified separately below and in `docs/VALIDATION.md`. Neither slice qualifies live Google Drive, OAuth/DPAPI, real Orchestrator interoperability, production secret resolution, a Windows service/task, installer, startup, or complete M02/M07 behavior. Relay remains transport-only; no project-Orchestrator workflow authority is present.

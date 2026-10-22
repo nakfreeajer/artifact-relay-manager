@@ -48,13 +48,16 @@ def _state_files(config):
     return detector, ledger
 
 
-def _status_command(config_path: Path, command: str, timeout: float = 20.0):
+def _status_command(config_path: Path, command: str, timeout: float = 20.0, project_id: str | None = None):
     env = dict(os.environ)
     env.pop("RELAY_GDRIVE_ACCESS_TOKEN", None)
     env.pop("RELAY_GDRIVE_OAUTH_CLIENT_FILE", None)
     try:
-        result = subprocess.run([sys.executable, str(Path(__file__).with_name("arm_v2_userhost.py")),
-                                 "--config", str(config_path), command],
+        args = [sys.executable, str(Path(__file__).with_name("arm_v2_userhost.py")),
+                "--config", str(config_path), command]
+        if project_id is not None:
+            args.extend(["--project-id", project_id])
+        result = subprocess.run(args,
                                 cwd=Path(__file__).parent, capture_output=True, text=True,
                                 timeout=timeout, env=env, check=False)
     except (OSError, subprocess.TimeoutExpired):
@@ -63,7 +66,8 @@ def _status_command(config_path: Path, command: str, timeout: float = 20.0):
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError):
         raise DashboardError("host returned invalid status") from None
-    allowed_codes = {"start": {0, 2, 3}, "status": {0, 1, 2}, "stop": {0, 2}}[command]
+    allowed_codes = {"start": {0, 2, 3}, "status": {0, 1, 2}, "stop": {0, 2},
+                     "pause": {0, 1, 2}, "resume": {0, 1, 2}}[command]
     if result.returncode not in allowed_codes:
         raise DashboardError("host returned an unexpected result")
     return result.returncode, payload
@@ -104,9 +108,10 @@ def dashboard_snapshot(config_path: Path):
     history.sort(key=lambda item: item["detectedAt"], reverse=True)
     projects = []
     for project in registry["folderProjects"]:
+        paused = host.get("globalPaused", False) or project["projectId"] in host.get("pausedProjectIds", [])
         projects.append({
             "projectId": project["projectId"], "displayName": project["displayName"],
-            "repository": project["repository"], "enabled": project["enabled"],
+            "repository": project["repository"], "enabled": project["enabled"], "paused": paused,
             "driveRootId": project["driveRootId"], "driveRootUrl": project["driveRootUrl"],
             "architectPromptsFolderId": project["architectPromptsFolderId"],
             "architectPromptsFolderUrl": project["architectPromptsFolderUrl"],
@@ -138,6 +143,7 @@ class DashboardApp:
         self.future = None
         self.latest = None
         self.last_error = None
+        self._pending_control_watch = None
         self.status_text = tk.StringVar(value="Loading offline project status…")
         self.notice_text = tk.StringVar(value="FIXTURE / OFFLINE ONLY — NOT LIVE DRIVE / APO")
         self.pending_text = tk.StringVar(value="Pending: —    Acknowledged: —")
@@ -166,6 +172,10 @@ class DashboardApp:
         self.stop_button.pack(side="left", padx=6)
         self.refresh_button = ttk.Button(controls, text="Refresh Status", command=self._queue_refresh)
         self.refresh_button.pack(side="left", padx=6)
+        self.pause_all_button = ttk.Button(controls, text="Pause All", command=lambda: self._queue_control("pause"))
+        self.pause_all_button.pack(side="left", padx=6)
+        self.resume_all_button = ttk.Button(controls, text="Resume All", command=lambda: self._queue_control("resume"))
+        self.resume_all_button.pack(side="left", padx=6)
         ttk.Label(controls, textvariable=self.status_text, font=("Segoe UI", 10, "bold")).pack(side="left", padx=14)
         ttk.Label(controls, textvariable=self.pending_text).pack(side="right")
 
@@ -176,11 +186,12 @@ class DashboardApp:
         panes.add(left, weight=3)
         panes.add(right, weight=2)
         ttk.Label(left, text="Projects (v2 folderProjects)", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        columns = ("projectId", "displayName", "repository", "enabled", "status", "events")
+        columns = ("projectId", "displayName", "repository", "enabled", "paused", "status", "events")
         self.project_table = ttk.Treeview(left, columns=columns, show="headings", height=8, selectmode="browse")
-        for column, title, width in (("projectId", "Project ID", 120), ("displayName", "Display name", 140),
-                                     ("repository", "Repository", 130), ("enabled", "Enabled", 70),
-                                     ("status", "Recent status", 145), ("events", "Events", 60)):
+        for column, title, width in (("projectId", "Project ID", 115), ("displayName", "Display name", 130),
+                                     ("repository", "Repository", 115), ("enabled", "Enabled", 60),
+                                     ("paused", "Paused", 60), ("status", "Recent status", 135),
+                                     ("events", "Events", 55)):
             self.project_table.heading(column, text=title)
             self.project_table.column(column, width=width, stretch=column in {"displayName", "repository", "status"})
         self.project_table.pack(fill="x", pady=(4, 6))
@@ -190,6 +201,12 @@ class DashboardApp:
         self.enable_button.pack(side="left", padx=(0, 6))
         self.disable_button = ttk.Button(row_controls, text="Disable Selected", command=lambda: self._set_enabled(False))
         self.disable_button.pack(side="left", padx=6)
+        self.pause_project_button = ttk.Button(row_controls, text="Pause Selected",
+            command=lambda: self._queue_selected_control("pause"))
+        self.pause_project_button.pack(side="left", padx=6)
+        self.resume_project_button = ttk.Button(row_controls, text="Resume Selected",
+            command=lambda: self._queue_selected_control("resume"))
+        self.resume_project_button.pack(side="left", padx=6)
         ttk.Label(row_controls, text="Remove: not yet available; guarded removal is deferred.").pack(side="right")
         ttk.Label(left, text="Selected project details", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 2))
         self.details = tk.Text(left, height=10, wrap="word", state="disabled", font=("Consolas", 9))
@@ -228,7 +245,9 @@ class DashboardApp:
 
     def _set_controls_busy(self, busy):
         state = "disabled" if busy else "normal"
-        for button in (self.start_button, self.stop_button, self.refresh_button):
+        for button in (self.start_button, self.stop_button, self.refresh_button,
+                       self.pause_all_button, self.resume_all_button,
+                       self.pause_project_button, self.resume_project_button):
             button.configure(state=state)
 
     def _queue_refresh(self):
@@ -247,15 +266,23 @@ class DashboardApp:
         except tk.TclError:
             return
 
-    def _queue_control(self, command):
+    def _queue_control(self, command, project_id=None):
         if self.future is not None:
             return
         self._set_controls_busy(True)
         self.future = self.executor.submit(_status_command, self.config_path, command,
-            max(20, arm_v2_userhost.MAX_STOP_SECONDS + 5))
+            max(20, arm_v2_userhost.MAX_STOP_SECONDS + 5), project_id)
         self.last_error = None
         self._pending_command = command
+        self._pending_project_id = project_id
         self.root.after(50, self._poll_future)
+
+    def _queue_selected_control(self, command):
+        project_id = self._selected_project()
+        if not project_id:
+            self.notice_text.set("Select a project first.")
+            return
+        self._queue_control(command, project_id)
 
     def _poll_future(self):
         future = self.future
@@ -271,9 +298,18 @@ class DashboardApp:
             if isinstance(value, tuple):
                 code, payload = value
                 command = getattr(self, "_pending_command", "control")
+                project_id = getattr(self, "_pending_project_id", None)
                 self.last_error = None
-                self.notice_text.set(self._control_message(command, code, payload))
+                self.notice_text.set(self._control_message(command, code, payload, project_id))
+                if (command in {"pause", "resume"} and payload.get("result") == "PENDING"
+                        and payload.get("error") == "CONTROL_TIMEOUT"
+                        and isinstance(payload.get("requestId"), str)):
+                    self._pending_control_watch = {
+                        "requestId": payload["requestId"], "command": command,
+                        "projectId": project_id,
+                    }
                 self._pending_command = None
+                self._pending_project_id = None
                 self._set_controls_busy(True)
                 self.future = self.executor.submit(dashboard_snapshot, self.config_path)
                 self.root.after(50, self._poll_future)
@@ -288,14 +324,25 @@ class DashboardApp:
         self._render()
 
     @staticmethod
-    def _control_message(command, code, payload):
+    def _control_message(command, code, payload, project_id=None):
         outcome = payload.get("result", payload.get("status"))
         if command == "start" and code == 3 and outcome == "ALREADY_RUNNING":
             return "Existing monitor attached; no second worker started."
         if command == "start" and code == 0 and outcome == "STARTED":
+            if payload.get("status") == "PAUSED":
+                return "Monitor started and remains PAUSED until explicit Resume."
             return "Monitor started by the accepted M05 host."
         if command == "stop" and code == 0 and outcome == "STOPPED":
             return "Monitor stopped cleanly; local event state remains durable."
+        if command in {"pause", "resume"} and code == 0 and outcome == "APPLIED":
+            scope = f"project {project_id}" if project_id else "all projects"
+            return f"{scope} {command} applied at a safe monitor boundary."
+        if command in {"pause", "resume"} and outcome == "PENDING":
+            if payload.get("error") == "CONTROL_TIMEOUT":
+                return "Control is still pending at a safe boundary; status refresh will track its outcome."
+            return "Another pause control remains pending; no new control was confirmed."
+        if command in {"pause", "resume"} and outcome == "INVALID_OWNER":
+            return "Pause control rejected because the active worker owner could not be verified."
         if command == "status" and code == 1 and outcome == "STARTING":
             return "Monitor is starting."
         if code == 0 and outcome in {"RUNNING", "STOPPED"}:
@@ -310,36 +357,81 @@ class DashboardApp:
             self.disable_button.configure(state="disabled")
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="disabled")
+            self.pause_all_button.configure(state="disabled")
+            self.resume_all_button.configure(state="disabled")
+            self.pause_project_button.configure(state="disabled")
+            self.resume_project_button.configure(state="disabled")
             return
         host = self.latest["host"]
+        watch = self._pending_control_watch
+        if watch:
+            applied = host.get("lastAppliedControl")
+            if isinstance(applied, dict) and applied.get("requestId") == watch["requestId"]:
+                scope = f"project {watch['projectId']}" if watch["projectId"] else "all projects"
+                self.notice_text.set(f"{scope} {watch['command']} applied after timeout at a safe monitor boundary.")
+                self._pending_control_watch = None
+            elif (host.get("pendingControl") == watch["requestId"]
+                    or host.get("pauseControlStatus") == "APPLYING"):
+                self.notice_text.set("Control remains pending at a safe monitor boundary; status refresh is tracking it.")
+            elif host.get("pauseControlStatus") == "PENDING":
+                self.notice_text.set("A pause control remains pending; refreshed status cannot confirm this request yet.")
+            else:
+                self.notice_text.set("Control status refreshed, but this request's final outcome is unavailable.")
+                self._pending_control_watch = None
         self.status_text.set(f"Monitor: {host.get('status', 'UNKNOWN')}  |  Cycle: {host.get('cycle', 0)}"
                              f"  |  Heartbeat: {host.get('heartbeatAt', '—')}")
         self.pending_text.set(f"Pending: {self.latest['pending']}    Acknowledged: {self.latest['acked']}")
         current = {row["projectId"]: row for row in self.latest["projects"]}
-        for row_id in self.project_table.get_children():
+        selected_project_id = self._selected_project()
+        try:
+            scroll_position = self.project_table.yview()[0]
+        except tk.TclError:
+            scroll_position = 0.0
+        existing = set(self.project_table.get_children())
+        for row_id in existing - set(current):
             self.project_table.delete(row_id)
-        for project in self.latest["projects"]:
-            self.project_table.insert("", "end", iid=project["projectId"], values=(
-                project["projectId"], project["displayName"], project["repository"] or "—",
-                "Yes" if project["enabled"] else "No", project["status"], project["events"]))
+        for index, project in enumerate(self.latest["projects"]):
+            values = (project["projectId"], project["displayName"], project["repository"] or "—",
+                      "Yes" if project["enabled"] else "No", "Yes" if project["paused"] else "No",
+                      project["status"], project["events"])
+            if project["projectId"] in existing:
+                self.project_table.item(project["projectId"], values=values)
+            else:
+                self.project_table.insert("", "end", iid=project["projectId"], values=values)
+            self.project_table.move(project["projectId"], "", index)
         for row_id in self.history.get_children():
             self.history.delete(row_id)
         for index, event in enumerate(self.latest["history"]):
             self.history.insert("", "end", iid=f"event-{index}", values=(
                 event["detectedAt"], event["projectId"], event["eventType"], event["changeKind"],
                 event["receiptStatus"], event["eventId"]))
-        selected = self.project_table.selection()
-        if selected and selected[0] in current:
-            self._write_details(current[selected[0]])
+        if selected_project_id in current:
+            self.project_table.selection_set(selected_project_id)
+            self.project_table.focus(selected_project_id)
+        try:
+            self.project_table.yview_moveto(scroll_position)
+        except tk.TclError:
+            pass
+        if selected_project_id in current:
+            self._write_details(current[selected_project_id])
+        elif current:
+            self._write_details(next(iter(current.values())))
         self.enable_button.configure(state="normal")
         self.disable_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="normal")
+        active = host.get("status") in {"RUNNING", "PAUSED", "DEGRADED"}
+        self.pause_all_button.configure(state="normal" if active else "disabled")
+        self.resume_all_button.configure(state="normal" if active else "disabled")
+        selected_active = selected_project_id in current and active
+        self.pause_project_button.configure(state="normal" if selected_active else "disabled")
+        self.resume_project_button.configure(state="normal" if selected_active else "disabled")
 
     def _write_details(self, project):
         text = (f"Project: {project['displayName']} ({project['projectId']})\n"
                 f"Repository: {project['repository'] or '—'}\n"
                 f"Enabled: {'Yes' if project['enabled'] else 'No'}\n"
+                f"Paused: {'Yes' if project['paused'] else 'No'}\n"
                 f"Recent status: {project['status']}\n"
                 f"Latest issue class: {project['lastIssue']}\n"
                 f"Drive root: {project['driveRootId']}\n  {project['driveRootUrl']}\n"

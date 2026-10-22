@@ -229,6 +229,62 @@ class ForegroundMonitorTests(unittest.TestCase):
         self.assertEqual({record["projectId"] for record in state["folders"].values()}, {"project-a"})
         self.assertEqual(self.apo_a.request_count + self.apo_b.request_count, 0)
 
+    def test_per_project_pause_suppresses_scan_and_dispatch_while_peer_progresses(self):
+        provider = SequenceProvider([snapshots(), snapshots(arrivals=True, changed=True),
+                                     snapshots(arrivals=True, changed=True), snapshots(arrivals=True, changed=True)])
+        monitor = self.monitor(provider)
+        monitor.cycle(1)
+        self.apo_b.drop_after_accept = 1
+        provider.index = 1
+        monitor.cycle(2)
+        provider.index = 2
+        event_cycle = monitor.cycle(3)
+        event_b = next(event for event in event_cycle["events"] if event["projectId"] == "project-b")
+        self.assertEqual(event_cycle["delivery"]["pendingThisRun"], 1)
+        before_ledger = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        before_b = before_ledger["entries"][event_b["eventId"]]
+        self.assertEqual(before_b["status"], "PENDING")
+        self.clock.advance(10)
+
+        state_before = json.loads(self.detector_path.read_text(encoding="utf-8"))
+        b_folders_before = {key: value for key, value in state_before["folders"].items()
+                            if value["projectId"] == "project-b"}
+        calls_before = len(provider.calls)
+        b_requests_before = self.apo_b.request_count
+        updated = snapshots(arrivals=True, changed=True)
+        a_file = updated["folders"]["prompts-a"]["items"][0]
+        a_file.update({"md5Checksum": "d" * 32, "version": "4"})
+        provider.sequence.append(updated)
+        provider.index = 3
+        paused = monitor.cycle(4, paused_project_ids=["project-b"])
+        self.assertEqual(next(item["status"] for item in paused["projects"]
+                              if item["projectId"] == "project-b"), "PAUSED_NOT_POLLED")
+        new_calls = [folder for _index, folder in provider.calls[calls_before:]]
+        self.assertEqual(new_calls, ["prompts-a", "reports-a"])
+        after_state = json.loads(self.detector_path.read_text(encoding="utf-8"))
+        b_folders_after = {key: value for key, value in after_state["folders"].items()
+                           if value["projectId"] == "project-b"}
+        self.assertEqual(b_folders_after, b_folders_before)
+        after_b = json.loads(self.ledger_path.read_text(encoding="utf-8"))["entries"][event_b["eventId"]]
+        self.assertEqual(after_b["status"], "PENDING")
+        self.assertEqual(after_b["attemptCount"], before_b["attemptCount"])
+        self.assertEqual(self.apo_b.request_count, b_requests_before)
+        self.assertGreaterEqual(self.apo_a.processed_count, 2)
+
+        all_state_before = self.detector_path.read_bytes()
+        all_ledger_before = self.ledger_path.read_bytes()
+        calls_before = len(provider.calls)
+        requests_before = (self.apo_a.request_count, self.apo_b.request_count)
+        all_paused = monitor.cycle(5, paused_project_ids=["project-a", "project-b"])
+        self.assertTrue(all(item["status"] == "PAUSED_NOT_POLLED" for item in all_paused["projects"]))
+        self.assertEqual(all_paused["delivery"], None)
+        self.assertEqual(len(provider.calls), calls_before)
+        self.assertEqual(self.detector_path.read_bytes(), all_state_before)
+        self.assertEqual(self.ledger_path.read_bytes(), all_ledger_before)
+        self.assertEqual((self.apo_a.request_count, self.apo_b.request_count), requests_before)
+        with self.assertRaises(ProjectRegistryError):
+            monitor.cycle(6, paused_project_ids=["missing-project"])
+
     def test_provider_errors_use_bounded_exponential_sleep_without_busy_loop(self):
         provider = SequenceProvider([snapshots()] * 4)
         provider.fail_folder = "reports-b"

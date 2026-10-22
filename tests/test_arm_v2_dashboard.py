@@ -146,6 +146,66 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("worker-fixture.json", serialized)
         self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
 
+    def test_selected_project_survives_three_real_refreshes_and_pause_resume_controls_work(self):
+        app = self.open_app()
+        registry = ProjectRegistry(self.registry_path)
+        provider = FakeDriveProvider(folder_fixture())
+        for suffix in ("a", "b"):
+            registry.configure_folder_project(project_id=f"project-{suffix}",
+                display_name=f"Project {suffix.upper()}",
+                root_url=f"https://drive.google.com/drive/folders/root-{suffix}",
+                prompts_id=f"prompts-{suffix}", reports_id=f"reports-{suffix}",
+                endpoint=f"http://127.0.0.1:{49152 + ord(suffix)}/notify", provider=provider,
+                repository=f"owner/project-{suffix}", secret_ref=f"test:project-{suffix}", enabled=True)
+        self._queue_snapshot()
+        self.wait_idle()
+        app.start_button.invoke()
+        self.wait_idle(timeout=10)
+        self.assertIn(app.latest["host"]["status"], {"RUNNING", "DEGRADED"})
+        initial_cycle = app.latest["host"]["cycle"]
+        app.project_table.selection_set("project-b")
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            self.tk_root.update()
+            if app.future is None and app.latest["host"].get("cycle", 0) >= initial_cycle + 3:
+                break
+            time.sleep(0.02)
+        self.assertGreaterEqual(app.latest["host"].get("cycle", 0), initial_cycle + 3)
+        self.assertEqual(app.project_table.selection(), ("project-b",))
+        self.assertIn("project-b", app.details.get("1.0", "end"))
+        self.assertEqual(str(app.pause_project_button.cget("state")), "normal")
+        app.pause_project_button.invoke()
+        self.wait_idle(timeout=12)
+        self.assertIn("project-b", app.latest["host"]["pausedProjectIds"])
+        self.assertEqual(app.project_table.selection(), ("project-b",))
+        self.assertIn("Paused: Yes", app.details.get("1.0", "end"))
+        app.resume_project_button.invoke()
+        self.wait_idle(timeout=12)
+        self.assertNotIn("project-b", app.latest["host"]["pausedProjectIds"])
+        app.stop_button.invoke()
+        self.wait_idle(timeout=12)
+        self.assertEqual(app.latest["host"]["status"], "STOPPED")
+
+    def test_timed_out_control_notice_reconciles_to_later_worker_acknowledgement(self):
+        app = self.open_app()
+        request_id = "b" * 32
+        app._pending_control_watch = {"requestId": request_id, "command": "pause", "projectId": None}
+        app.latest = {"host": {"status": "RUNNING", "cycle": 2, "heartbeatAt": "fixture",
+                               "pauseControlStatus": "PENDING", "pendingControl": request_id,
+                               "lastAppliedControl": None},
+                      "projects": [], "history": [], "pending": 0, "acked": 0}
+        app._render()
+        self.assertIn("remains pending", app.notice_text.get())
+        app.latest["host"].update({"status": "PAUSED", "pauseControlStatus": "IDLE",
+                                  "pendingControl": None,
+                                  "lastAppliedControl": {"requestId": request_id}})
+        app._render()
+        self.assertIn("applied after timeout", app.notice_text.get())
+        self.assertIsNone(app._pending_control_watch)
+
+    def _queue_snapshot(self):
+        self.app._queue_refresh()
+
     def test_invalid_folder_child_duplicate_and_corrupt_fixture_preserve_registry(self):
         app = self.open_app()
         original = self.registry_path.read_bytes()

@@ -274,13 +274,23 @@ class NotificationSender:
             raise NotificationError("INVALID_ACK_AUTHENTICATION")
         return ack, signature
 
-    def dispatch(self, *, limit=100, per_project_limit=None):
+    def dispatch(self, *, limit=100, per_project_limit=None, project_ids=None):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise NotificationError("dispatch limit must be between 1 and 100")
         if (per_project_limit is not None
                 and (type(per_project_limit) is not int or not 1 <= per_project_limit <= 100)):
             raise NotificationError("per-project dispatch limit must be between 1 and 100")
         registry = self.registry.load()
+        allowed_project_ids = {project["projectId"] for project in registry["folderProjects"]}
+        if project_ids is not None:
+            if (not isinstance(project_ids, (list, tuple, set, frozenset))
+                    or any(not isinstance(project_id, str) for project_id in project_ids)
+                    or len(set(project_ids)) != len(project_ids)
+                    or any(project_id not in allowed_project_ids for project_id in project_ids)):
+                raise NotificationError("invalid selected project set")
+            selected_project_ids = set(project_ids)
+        else:
+            selected_project_ids = None
         source_events = self._source(registry)
         ledger = _read_ledger(self.ledger_path)
         self._validate_bindings(ledger, source_events)
@@ -295,7 +305,8 @@ class NotificationSender:
         attempted = acked = pending = deduplicated = deferred = 0
         for event_id in sorted(source_events):
             event, project = source_events[event_id]
-            if not project["enabled"]:
+            if (not project["enabled"]
+                    or selected_project_ids is not None and project["projectId"] not in selected_project_ids):
                 continue
             entry = next_ledger["entries"].get(event_id)
             if entry is None:

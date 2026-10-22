@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from arm_foreground import ForegroundMonitor
+from arm_pause_state import PauseStateError, PauseStateStore, public_pause_state
 from drive_change_detector import DetectionError
 from project_registry import ProjectRegistry, ProjectRegistryError
 from relay_userhost import SingleInstanceLock
@@ -43,7 +44,9 @@ MAX_HEARTBEAT_BYTES = 32768
 MAX_STOP_SECONDS = 60
 MAX_RECENT_PROJECTS = 100
 _SAFE_CYCLE_STATUS = {"OK", "DEGRADED"}
-_SAFE_OBSERVATION = {"SCANNED", "SKIPPED_NO_ENABLED_PROJECTS", "DEGRADED_ATOMIC_SCAN"}
+_SAFE_OBSERVATION = {"SCANNED", "SKIPPED_NO_ENABLED_PROJECTS", "SKIPPED_PAUSED_PROJECTS",
+                     "DEGRADED_ATOMIC_SCAN"}
+_SAFE_PROJECT_STATUS = {"OBSERVED", "DISABLED_NOT_POLLED", "PAUSED_NOT_POLLED", "DEGRADED_ATOMIC_SCAN"}
 
 
 def _pairs(pairs):
@@ -254,6 +257,7 @@ class HostConfig:
         self.heartbeat_path = self.control_dir / "heartbeat.json"
         self.stop_path = self.control_dir / "stop.json"
         self.log_path = self.control_dir / "worker.jsonl"
+        self.pause_store = PauseStateStore(self.control_dir, self.state_identity, self.config_digest)
 
 
 def load_config(path: Path) -> HostConfig:
@@ -337,8 +341,10 @@ class ReloadingFixtureProvider:
 
     def __init__(self, path: Path):
         self.path = path
+        self.calls_by_folder = {}
 
     def list_folder(self, folder_id: str):
+        self.calls_by_folder[folder_id] = self.calls_by_folder.get(folder_id, 0) + 1
         value = _read_json(self.path, 4 * 1024 * 1024)
         if (not isinstance(value, dict) or set(value) != {"folders", "fail"}
                 or type(value["fail"]) is not bool or not isinstance(value["folders"], dict)
@@ -366,8 +372,12 @@ def _safe_cycle(record: dict) -> dict:
         safe["nextDelaySeconds"] = delay
     for project in record.get("projects", [])[:MAX_RECENT_PROJECTS]:
         if (isinstance(project, dict) and isinstance(project.get("projectId"), str)
-                and project.get("status") in {"OBSERVED", "DISABLED_NOT_POLLED", "DEGRADED_ATOMIC_SCAN"}):
-            safe["projects"].append({"projectId": project["projectId"], "status": project["status"]})
+                and project.get("status") in _SAFE_PROJECT_STATUS):
+            item = {"projectId": project["projectId"], "status": project["status"]}
+            calls = project.get("providerCalls")
+            if type(calls) is int and 0 <= calls <= 2**31 - 1:
+                item["providerCalls"] = calls
+            safe["projects"].append(item)
     for event in record.get("events", [])[:MAX_RECENT_PROJECTS]:
         if isinstance(event, dict):
             item = {key: event[key] for key in ("projectId", "eventId", "eventType", "fileId", "changeKind")
@@ -403,7 +413,7 @@ def _safe_prior_cycle(config: HostConfig) -> int:
 
 
 def _heartbeat(config: HostConfig, *, state: str, worker_id: str, cycle: int,
-               recent: dict | None, error: str | None = None) -> dict:
+               recent: dict | None, pause_state: dict, error: str | None = None) -> dict:
     pid = os.getpid()
     result = {
         "schemaVersion": 1, "stateIdentity": config.state_identity,
@@ -414,10 +424,36 @@ def _heartbeat(config: HostConfig, *, state: str, worker_id: str, cycle: int,
         "startedAt": getattr(_heartbeat, "started_at", datetime.now(timezone.utc).isoformat()),
         "heartbeatAt": datetime.now(timezone.utc).isoformat(),
         "recentCycle": recent,
+        "pauseState": public_pause_state(pause_state),
     }
     if error:
         result["errorClass"] = error[:80]
     return result
+
+
+def _effective_pause_state(registry: dict, pause_state: dict) -> bool:
+    if pause_state["globalPaused"]:
+        return True
+    enabled = [project["projectId"] for project in registry["folderProjects"] if project["enabled"]]
+    return bool(enabled) and all(project_id in set(pause_state["pausedProjectIds"]) for project_id in enabled)
+
+
+def _pause_recent(cycle: int, registry: dict, pause_state: dict) -> dict:
+    paused = set(pause_state["pausedProjectIds"])
+    return {"cycle": cycle, "status": "OK", "observation": "SKIPPED_PAUSED_PROJECTS",
+            "projects": [{"projectId": project["projectId"], "status":
+                          ("DISABLED_NOT_POLLED" if not project["enabled"] else "PAUSED_NOT_POLLED"
+                           if pause_state["globalPaused"] or project["projectId"] in paused
+                           else "OBSERVED"), "providerCalls": 0}
+                         for project in registry["folderProjects"]],
+            "events": [], "delivery": None, "observationErrorClass": None,
+            "deliveryErrorClass": None, "nextDelaySeconds": None}
+
+
+def _heartbeat_state(registry: dict, pause_state: dict, recent: dict) -> str:
+    if _effective_pause_state(registry, pause_state):
+        return "PAUSED"
+    return "DEGRADED" if recent.get("status") == "DEGRADED" else "RUNNING"
 
 
 def _append_log(config: HostConfig, record: dict) -> None:
@@ -481,53 +517,107 @@ def _worker(config_path: Path) -> int:
     socket.create_connection = loopback_connection
     cycle = 0
     recent = None
+    pause_state = {"globalPaused": False, "pausedProjectIds": [], "pendingRequest": None,
+                   "lastAppliedRequest": None}
     try:
         cycle = _safe_prior_cycle(config)
         _heartbeat.started_at = datetime.now(timezone.utc).isoformat()
-        ready = _heartbeat(config, state="STARTING", worker_id=worker_id, cycle=cycle, recent=None)
+        registry = _ensure_loopback_registry(config.registry_path)
+        project_ids = [project["projectId"] for project in registry["folderProjects"]]
+        pause_state = config.pause_store.initialize(project_ids)
+        ready = _heartbeat(config, state="STARTING", worker_id=worker_id, cycle=cycle,
+                           recent=None, pause_state=pause_state)
         _atomic_json(config.heartbeat_path, ready)
         _append_log(config, {"recentCycle": None})
-        registry = _ensure_loopback_registry(config.registry_path)
         secret_refs = {project.get("orchestratorSecretRef") for project in registry["folderProjects"]
                        if project["enabled"]}
         if any(reference not in config.test_secrets for reference in secret_refs):
             raise UserHostError("offline test key is missing for an enabled project")
+        provider = ReloadingFixtureProvider(config.fixture_path)
         monitor = ForegroundMonitor(
             config.registry_path, config.detector_path, config.ledger_path,
-            provider=ReloadingFixtureProvider(config.fixture_path),
+            provider=provider,
             secret_resolver=config.test_secrets.get,
             interval_seconds=config.interval_seconds, dispatch_limit=8,
         )
         while True:
             if _read_stop(config, worker_id):
                 stopped = _heartbeat(config, state="STOPPED", worker_id=worker_id,
-                                     cycle=cycle, recent=recent)
+                                     cycle=cycle, recent=recent, pause_state=pause_state)
                 _atomic_json(config.heartbeat_path, stopped)
                 _append_log(config, {"recentCycle": recent})
                 return 0
             registry = _ensure_loopback_registry(config.registry_path)
+            project_ids = [project["projectId"] for project in registry["folderProjects"]]
+            pause_state = config.pause_store.load(project_ids)
+            if pause_state["pendingRequest"] is not None:
+                pause_state, _changed = config.pause_store.apply_pending(project_ids, worker_id)
+            if _read_stop(config, worker_id):
+                stopped = _heartbeat(config, state="STOPPED", worker_id=worker_id,
+                                     cycle=cycle, recent=recent, pause_state=pause_state)
+                _atomic_json(config.heartbeat_path, stopped)
+                _append_log(config, {"recentCycle": recent})
+                return 0
             secret_refs = {project.get("orchestratorSecretRef") for project in registry["folderProjects"]}
             if any(reference not in config.test_secrets for reference in secret_refs):
                 raise UserHostError("offline test key is missing for a configured project")
-            cycle += 1
-            record = _safe_cycle(monitor.cycle(cycle))
-            recent = record
-            state = "DEGRADED" if record["status"] == "DEGRADED" else "RUNNING"
-            current = _heartbeat(config, state=state, worker_id=worker_id, cycle=cycle, recent=recent)
+            enabled_ids = [project["projectId"] for project in registry["folderProjects"]
+                           if project["enabled"]]
+            unpaused_ids = [project_id for project_id in enabled_ids
+                            if project_id not in set(pause_state["pausedProjectIds"])]
+            paused_idle = pause_state["globalPaused"] or bool(enabled_ids) and not unpaused_ids
+            if paused_idle:
+                recent = _safe_cycle(_pause_recent(cycle, registry, pause_state))
+                state = "PAUSED"
+                delay = min(config.interval_seconds, 5)
+            else:
+                cycle += 1
+                call_counts_before = dict(provider.calls_by_folder)
+                record = _safe_cycle(monitor.cycle(cycle, paused_project_ids=pause_state["pausedProjectIds"]))
+                record = json.loads(json.dumps(record))
+                for project_status in record["projects"]:
+                    project = next(item for item in registry["folderProjects"]
+                                   if item["projectId"] == project_status["projectId"])
+                    project_status["providerCalls"] = sum(
+                        provider.calls_by_folder.get(project[key], 0) - call_counts_before.get(project[key], 0)
+                        for key in ("architectPromptsFolderId", "executorReportsFolderId"))
+                record = _safe_cycle(record)
+                recent = record
+                # Apply controls only after the current monitor cycle has completed.
+                if _read_stop(config, worker_id):
+                    stopped = _heartbeat(config, state="STOPPED", worker_id=worker_id,
+                                         cycle=cycle, recent=recent, pause_state=pause_state)
+                    _atomic_json(config.heartbeat_path, stopped)
+                    _append_log(config, {"recentCycle": recent})
+                    return 0
+                registry = _ensure_loopback_registry(config.registry_path)
+                project_ids = [project["projectId"] for project in registry["folderProjects"]]
+                pause_state = config.pause_store.load(project_ids)
+                if pause_state["pendingRequest"] is not None:
+                    pause_state, _changed = config.pause_store.apply_pending(project_ids, worker_id)
+                state = _heartbeat_state(registry, pause_state, recent)
+                delay = monitor.interval_seconds
+                if record["status"] == "DEGRADED":
+                    delay = min(record.get("nextDelaySeconds", delay), 3600)
+            current = _heartbeat(config, state=state, worker_id=worker_id, cycle=cycle,
+                                 recent=recent, pause_state=pause_state)
             _atomic_json(config.heartbeat_path, current)
             _append_log(config, {"recentCycle": recent})
-            delay = monitor.interval_seconds
-            if record["status"] == "DEGRADED":
-                delay = min(record.get("nextDelaySeconds", delay), 3600)
             deadline = time.monotonic() + delay
             while time.monotonic() < deadline:
                 if _read_stop(config, worker_id):
+                    break
+                registry = _ensure_loopback_registry(config.registry_path)
+                project_ids = [project["projectId"] for project in registry["folderProjects"]]
+                pending_state = config.pause_store.load(project_ids)
+                if pending_state["pendingRequest"] is not None:
                     break
                 time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
     except Exception as exc:
         try:
             failed = _heartbeat(config, state="DEGRADED", worker_id=worker_id,
-                                cycle=cycle, recent=recent, error=type(exc).__name__)
+                                cycle=cycle, recent=recent, pause_state=pause_state,
+                                error=type(exc).__name__)
             _atomic_json(config.heartbeat_path, failed)
             _append_log(config, failed)
         except Exception:
@@ -566,10 +656,22 @@ def _verified_heartbeat(config: HostConfig, *, require_lock: bool) -> dict | Non
             or not isinstance(value.get("workerInstanceId"), str)
             or not re.fullmatch(r"[a-f0-9]{32}", value["workerInstanceId"])
             or not isinstance(value.get("pid"), int) or value["pid"] <= 0
-            or value.get("state") not in {"STARTING", "RUNNING", "DEGRADED"}
+            or value.get("state") not in {"STARTING", "RUNNING", "PAUSED", "DEGRADED"}
             or type(value.get("cycle")) is not int or value["cycle"] < 0
             or not isinstance(value.get("heartbeatAt"), str) or len(value["heartbeatAt"]) > 64
-            or value.get("recentCycle") is not None and not isinstance(value["recentCycle"], dict)):
+            or value.get("recentCycle") is not None and not isinstance(value["recentCycle"], dict)
+            or not isinstance(value.get("pauseState"), dict)
+            or set(value["pauseState"]) != {"globalPaused", "pausedProjectIds", "pendingRequestId",
+                                            "lastAppliedRequestId", "lastAppliedCommand", "lastAppliedProjectId"}
+            or type(value["pauseState"].get("globalPaused")) is not bool
+            or not isinstance(value["pauseState"].get("pausedProjectIds"), list)
+            or any(not isinstance(project_id, str) for project_id in value["pauseState"]["pausedProjectIds"])
+            or value["pauseState"].get("pendingRequestId") is not None
+            and (not isinstance(value["pauseState"]["pendingRequestId"], str)
+                 or not re.fullmatch(r"[a-f0-9]{32}", value["pauseState"]["pendingRequestId"]))
+            or value["pauseState"].get("lastAppliedRequestId") is not None
+            and (not isinstance(value["pauseState"]["lastAppliedRequestId"], str)
+                 or not re.fullmatch(r"[a-f0-9]{32}", value["pauseState"]["lastAppliedRequestId"]))):
         raise UserHostError("worker ownership state does not match this configuration")
     if (_sid_for_process(value["pid"]) != value.get("userIdentity")
             or _sid_for_process(value["pid"]) != _sid_for_process(os.getpid())
@@ -580,10 +682,19 @@ def _verified_heartbeat(config: HostConfig, *, require_lock: bool) -> dict | Non
 
 def status(config_path: Path) -> dict:
     config = load_config(config_path)
+    registry = _ensure_loopback_registry(config.registry_path)
+    project_ids = [project["projectId"] for project in registry["folderProjects"]]
+    pause_state = config.pause_store.load(project_ids)
+    pause_summary = public_pause_state(pause_state)
+    control_status = ("PENDING" if pause_state["pendingRequest"] is not None else "IDLE")
     worker_busy = _probe_lock(config.worker_lock_path)
     start_busy = _probe_lock(config.start_lock_path)
     if not worker_busy and not start_busy:
-        return {"status": "STOPPED", "platform": "windows" if os.name == "nt" else os.name}
+        return {"status": "STOPPED", "platform": "windows" if os.name == "nt" else os.name,
+                "globalPaused": pause_summary["globalPaused"],
+                "pausedProjectIds": pause_summary["pausedProjectIds"],
+                "pauseControlStatus": control_status,
+                "lastAppliedControl": pause_state["lastAppliedRequest"]}
     if not worker_busy:
         return {"status": "STARTING", "platform": "windows" if os.name == "nt" else os.name}
     value = _verified_heartbeat(config, require_lock=True)
@@ -592,7 +703,19 @@ def status(config_path: Path) -> dict:
                 "platform": "windows" if os.name == "nt" else os.name}
     result = {"status": value["state"], "platform": "windows" if os.name == "nt" else os.name,
               "pid": value["pid"], "cycle": value["cycle"], "heartbeatAt": value["heartbeatAt"],
-              "recentCycle": _safe_cycle(value["recentCycle"]) if value.get("recentCycle") else None}
+              "recentCycle": _safe_cycle(value["recentCycle"]) if value.get("recentCycle") else None,
+              "globalPaused": pause_summary["globalPaused"],
+              "pausedProjectIds": pause_summary["pausedProjectIds"],
+              "pendingControl": pause_summary["pendingRequestId"],
+              "lastAppliedControl": pause_state["lastAppliedRequest"],
+              "pauseControlStatus": control_status}
+    heartbeat_pause = value["pauseState"]
+    if (heartbeat_pause["globalPaused"] != pause_summary["globalPaused"]
+            or heartbeat_pause["pausedProjectIds"] != pause_summary["pausedProjectIds"]
+            or heartbeat_pause["lastAppliedRequestId"] != pause_summary["lastAppliedRequestId"]):
+        result["pauseControlStatus"] = "APPLYING"
+    if result["pauseControlStatus"] == "PENDING":
+        result["pendingControl"] = pause_summary["pendingRequestId"]
     try:
         heartbeat_time = datetime.fromisoformat(value["heartbeatAt"])
         if heartbeat_time.tzinfo is None:
@@ -613,8 +736,10 @@ def _emit(value: dict) -> int:
     outcome = value.get("result", value.get("status"))
     if not isinstance(outcome, str):
         return 2
-    if outcome in {"STARTED", "STOPPED", "RUNNING"}:
+    if outcome in {"STARTED", "STOPPED", "RUNNING", "PAUSED", "APPLIED"}:
         return 0
+    if outcome == "PENDING":
+        return 2 if value.get("error") == "CONTROL_TIMEOUT" else 1
     if outcome == "ALREADY_RUNNING":
         return 3
     if outcome == "STARTING":
@@ -625,6 +750,8 @@ def _emit(value: dict) -> int:
 
 def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
     config = load_config(config_path)
+    registry = _ensure_loopback_registry(config.registry_path)
+    config.pause_store.load([project["projectId"] for project in registry["folderProjects"]])
     config.control_dir.mkdir(parents=True, exist_ok=True)
     start_lock = SingleInstanceLock(config.start_lock_path)
     if not start_lock.acquire():
@@ -663,9 +790,11 @@ def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
                     heartbeat = _verified_heartbeat(config, require_lock=True)
                 except UserHostError:
                     heartbeat = None
-                if heartbeat and heartbeat.get("pid") == worker.pid and heartbeat.get("state") in {"RUNNING", "DEGRADED"}:
+                if heartbeat and heartbeat.get("pid") == worker.pid and heartbeat.get("state") in {
+                        "RUNNING", "PAUSED", "DEGRADED"}:
                     return _emit({"result": "STARTED", "ready": True, "pid": worker.pid,
-                                  "controllerPid": os.getpid(), "cycle": heartbeat["cycle"]})
+                                  "controllerPid": os.getpid(), "cycle": heartbeat["cycle"],
+                                  "status": heartbeat["state"]})
             time.sleep(0.05)
         if worker.poll() is not None:
             return _emit({"result": "START_FAILED", "error": "WORKER_EXITED"})
@@ -709,10 +838,47 @@ def stop(config_path: Path) -> int:
     return _emit({"result": "STOP_TIMEOUT"})
 
 
+def pause_control(config_path: Path, command: str, project_id: str | None = None) -> int:
+    config = load_config(config_path)
+    registry = _ensure_loopback_registry(config.registry_path)
+    worker_busy = _probe_lock(config.worker_lock_path)
+    if not worker_busy:
+        return _emit({"result": "INVALID_OWNER", "error": "WORKER_NOT_RUNNING"})
+    worker = _verified_heartbeat(config, require_lock=True)
+    if worker is None or worker.get("state") not in {"RUNNING", "PAUSED", "DEGRADED"}:
+        return _emit({"result": "INVALID_OWNER", "error": "WORKER_OWNERSHIP_UNAVAILABLE"})
+    project_ids = [project["projectId"] for project in registry["folderProjects"]]
+    try:
+        request_id, _state = config.pause_store.request(
+            command, project_id, project_ids, worker["workerInstanceId"])
+    except PauseStateError as exc:
+        if str(exc) == "another pause control request is pending":
+            return _emit({"result": "PENDING", "error": "CONTROL_PENDING"})
+        raise
+    deadline = time.monotonic() + config.stop_timeout_seconds
+    while time.monotonic() < deadline:
+        if not _probe_lock(config.worker_lock_path):
+            break
+        worker = _verified_heartbeat(config, require_lock=True)
+        if worker is None:
+            break
+        pause_view = worker.get("pauseState", {})
+        if pause_view.get("lastAppliedRequestId") == request_id:
+            return _emit({"result": "APPLIED", "requestId": request_id,
+                          "command": command, "projectId": project_id,
+                          "workerStatus": worker["state"]})
+        if worker.get("state") == "DEGRADED":
+            return _emit({"result": "DEGRADED", "requestId": request_id,
+                          "error": "WORKER_DEGRADED"})
+        time.sleep(0.05)
+    return _emit({"result": "PENDING", "error": "CONTROL_TIMEOUT", "requestId": request_id})
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("command", choices=("start", "status", "stop", "_worker"))
+    parser.add_argument("--project-id", help="v2 project target for pause/resume")
+    parser.add_argument("command", choices=("start", "status", "stop", "pause", "resume", "_worker"))
     args = parser.parse_args(argv)
     try:
         if os.name != "nt":
@@ -723,6 +889,12 @@ def main(argv=None) -> int:
             return _emit(status(args.config))
         if args.command == "stop":
             return stop(args.config)
+        if args.command in {"pause", "resume"}:
+            command = ("PAUSE_PROJECT" if args.command == "pause" else "RESUME_PROJECT") if args.project_id else (
+                "PAUSE_GLOBAL" if args.command == "pause" else "RESUME_GLOBAL")
+            return pause_control(args.config, command, args.project_id)
+        if args.project_id is not None:
+            raise UserHostError("project target is valid only for pause or resume")
         return _worker(args.config)
     except (UserHostError, ProjectRegistryError, DetectionError, OSError, ValueError):
         print(json.dumps({"result": "DEGRADED", "error": "CONFIG_OR_STATE_INVALID"},

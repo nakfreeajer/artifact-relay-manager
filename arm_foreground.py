@@ -38,7 +38,7 @@ class ForegroundMonitor:
         self.dispatch_limit = dispatch_limit
         self._provider_failures = 0
 
-    def cycle(self, cycle_number):
+    def cycle(self, cycle_number, *, paused_project_ids=None):
         if type(cycle_number) is not int or cycle_number < 1:
             raise ValueError("cycle number must be positive")
 
@@ -46,10 +46,21 @@ class ForegroundMonitor:
         registry = self.registry.load()
         projects = registry["folderProjects"]
         enabled = [project for project in projects if project["enabled"]]
-        enabled_ids = [project["projectId"] for project in enabled]
+        if paused_project_ids is None:
+            paused_ids = set()
+        else:
+            if (not isinstance(paused_project_ids, (list, tuple, set, frozenset))
+                    or any(not isinstance(project_id, str) for project_id in paused_project_ids)
+                    or len(set(paused_project_ids)) != len(paused_project_ids)):
+                raise ProjectRegistryError("invalid paused project set")
+            configured_ids = {project["projectId"] for project in projects}
+            if any(project_id not in configured_ids for project_id in paused_project_ids):
+                raise ProjectRegistryError("paused project does not match registry")
+            paused_ids = set(paused_project_ids)
+        enabled_ids = [project["projectId"] for project in enabled if project["projectId"] not in paused_ids]
         detection = {"result": "SKIPPED_NO_ENABLED_PROJECTS", "newEvents": []}
         observation_error = None
-        if enabled:
+        if enabled_ids:
             try:
                 detection = self.detector.scan(self.provider, project_ids=enabled_ids)
             except Exception as exc:
@@ -61,12 +72,14 @@ class ForegroundMonitor:
 
         delivery = None
         delivery_error = None
-        try:
-            # Previously persisted work can still progress if a new scan fails.
-            # One event per project per cycle prevents a busy project starving peers.
-            delivery = self.sender.dispatch(limit=self.dispatch_limit, per_project_limit=1)
-        except (NotificationError, ProjectRegistryError) as exc:
-            delivery_error = type(exc).__name__
+        if enabled_ids:
+            try:
+                # Previously persisted work can still progress if an unpaused scan fails.
+                # Paused projects are excluded from both new scans and every delivery attempt.
+                delivery = self.sender.dispatch(limit=self.dispatch_limit, per_project_limit=1,
+                                                project_ids=enabled_ids)
+            except (NotificationError, ProjectRegistryError) as exc:
+                delivery_error = type(exc).__name__
 
         if observation_error:
             self._provider_failures += 1
@@ -80,6 +93,8 @@ class ForegroundMonitor:
         for project in projects:
             if not project["enabled"]:
                 status = "DISABLED_NOT_POLLED"
+            elif project["projectId"] in paused_ids:
+                status = "PAUSED_NOT_POLLED"
             elif observation_error:
                 status = "DEGRADED_ATOMIC_SCAN"
             else:

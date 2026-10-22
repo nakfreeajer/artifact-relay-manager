@@ -8,7 +8,7 @@ import os
 import re
 import tempfile
 import threading
-import hashlib
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -49,6 +49,8 @@ class SimulatedApo:
         self.request_count = 0
         self.processed_count = len(self.receipts["receipts"])
         self.drop_after_accept = 0
+        self.response_delay_seconds = 0.0
+        self.request_received = threading.Event()
         self.mode = "normal"
         owner = self
 
@@ -59,6 +61,7 @@ class SimulatedApo:
             def do_POST(self):
                 with owner.lock:
                     owner.request_count += 1
+                    owner.request_received.set()
                     mode = owner.mode
                     owner.mode = "normal"
                     try:
@@ -128,6 +131,8 @@ class SimulatedApo:
                         signature = "0" * 64
                     if mode == "missing_ack":
                         ack_bytes = b"{}"
+                    if owner.response_delay_seconds:
+                        time.sleep(owner.response_delay_seconds)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("X-ARM-Ack-Signature", signature)
