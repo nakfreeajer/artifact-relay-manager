@@ -8,6 +8,7 @@ import tempfile
 import time
 import tkinter as tk
 import unittest
+from unittest.mock import patch
 
 from arm_v2_dashboard import DashboardApp, DashboardError, _loopback_endpoint, dashboard_snapshot
 from arm_v2_userhost import status as host_status
@@ -134,10 +135,12 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual([row["projectId"] for row in rows], ["project-a", "project-b"])
         self.assertTrue(all(not row["enabled"] for row in rows))
         self.app.project_table.selection_set("project-a")
+        self.tk_root.update()
         self.app.enable_button.invoke()
         self.wait_idle()
         self.assertTrue(next(row for row in self.app.latest["projects"] if row["projectId"] == "project-a")["enabled"])
         self.app.project_table.selection_set("project-a")
+        self.tk_root.update()
         self.app.disable_button.invoke()
         self.wait_idle()
         self.assertFalse(next(row for row in self.app.latest["projects"] if row["projectId"] == "project-a")["enabled"])
@@ -179,6 +182,12 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("project-b", app.latest["host"]["pausedProjectIds"])
         self.assertEqual(app.project_table.selection(), ("project-b",))
         self.assertIn("Paused: Yes", app.details.get("1.0", "end"))
+        app.disable_button.invoke()
+        self.wait_idle()
+        app.enable_button.invoke()
+        self.wait_idle()
+        self.assertIn("project-b", app.latest["host"]["pausedProjectIds"],
+                      "Start/Stop eligibility must not change Pause/Resume state")
         app.resume_project_button.invoke()
         self.wait_idle(timeout=12)
         self.assertNotIn("project-b", app.latest["host"]["pausedProjectIds"])
@@ -241,6 +250,76 @@ class DashboardTests(unittest.TestCase):
         self.detector_path.write_text("{broken", encoding="utf-8")
         with self.assertRaises(DashboardError):
             dashboard_snapshot(self.config_path)
+
+    def test_display_name_edit_uses_real_tk_callback_and_preserves_transport_identity(self):
+        app = self.open_app()
+        self.add_through_ui("project-a", "root-a", "http://127.0.0.1:49152/notify")
+        registry = ProjectRegistry(self.registry_path)
+        before = registry.show_folder_project("project-a")
+        app.project_table.selection_set("project-a")
+        self.tk_root.update()
+        app.edit_button.invoke()
+        dialog = next(child for child in self.tk_root.winfo_children() if isinstance(child, tk.Toplevel))
+        def descendants(widget):
+            result = []
+            for child in widget.winfo_children():
+                result.append(child)
+                result.extend(descendants(child))
+            return result
+        widgets = descendants(dialog)
+        entries = [child for child in widgets if child.winfo_class() == "TEntry"]
+        entry = entries[0]
+        entry.delete(0, "end")
+        entry.insert(0, "Renamed Project")
+        next(child for child in widgets
+             if child.winfo_class() == "TButton" and child.cget("text") == "Save").invoke()
+        self.wait_idle()
+        after = registry.show_folder_project("project-a")
+        self.assertEqual(after["displayName"], "Renamed Project")
+        for key in before.keys() - {"displayName"}:
+            self.assertEqual(after[key], before[key], key)
+        self.assertEqual(app.latest["projects"][0]["displayName"], "Renamed Project")
+
+    def test_stale_dashboard_edit_fails_closed_under_shared_write_lock(self):
+        app = self.open_app()
+        self.add_through_ui("project-a", "root-a", "http://127.0.0.1:49152/notify")
+        registry = ProjectRegistry(self.registry_path)
+        original = registry.show_folder_project("project-a")["displayName"]
+        registry.dashboard_write(lambda: registry.edit_folder_project_display_name(
+            "project-a", "Newer Name", expected_display_name=original))
+        before = self.registry_path.read_bytes()
+        with self.assertRaises(ProjectRegistryError):
+            registry.dashboard_write(lambda: registry.edit_folder_project_display_name(
+                "project-a", "Stale Name", expected_display_name=original))
+        self.assertEqual(self.registry_path.read_bytes(), before)
+
+    def test_guarded_removal_preserves_files_and_refuses_pause_references(self):
+        app = self.open_app()
+        self.add_through_ui("project-a", "root-a", "http://127.0.0.1:49152/notify")
+        self.add_through_ui("project-b", "root-b", "http://127.0.0.1:49153/notify")
+        registry = ProjectRegistry(self.registry_path)
+        app.project_table.selection_set("project-a")
+        self.tk_root.update()
+        config_bytes = self.registry_path.read_bytes()
+        host = __import__("arm_v2_userhost").load_config(self.config_path)
+        ids = [item["projectId"] for item in registry.list_folder_projects()]
+        host.pause_store.request("PAUSE_PROJECT", "project-a", ids, "a" * 32)
+        paused_bytes = self.registry_path.read_bytes()
+        with patch("arm_v2_dashboard.messagebox.askyesno", return_value=True):
+            app.remove_button.invoke()
+        self.assertEqual(self.registry_path.read_bytes(), paused_bytes)
+        self.assertIn("refused", app.notice_text.get().lower())
+        self.assertEqual({item["projectId"] for item in registry.list_folder_projects()}, set(ids))
+        # A project with no state references can be removed even while another project has a control reference.
+        app.project_table.selection_set("project-b")
+        self.tk_root.update()
+        with patch("arm_v2_dashboard.messagebox.askyesno", return_value=True):
+            app.remove_button.invoke()
+        self.wait_idle()
+        self.assertEqual([item["projectId"] for item in registry.list_folder_projects()], ["project-a"])
+        self.assertTrue(self.config_path.exists())
+        self.assertTrue(self.folder_fixture_path.exists())
+        self.assertNotEqual(self.registry_path.read_bytes(), config_bytes)
 
 
 if __name__ == "__main__":

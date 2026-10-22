@@ -249,3 +249,13 @@ Offline Windows Tk qualification and precise limitations are recorded in `docs/A
 The isolated branch `arm-v2-m02b-runtime-pause-resume-offline-1a` starts from M02.1A `f9eef9d655eae98b4f1f2552cc269ac2e51c3bae`. It adds durable pause state, safe-boundary worker acknowledgement, global/per-project suppression of scan and dispatch, state-preserving stop/restart, CLI controls, and dashboard selection persistence across refresh. Pause is distinct from `enabled=false`; detector state and pending ACKs are retained. Corrupt/mismatched pause state fails closed.
 
 Qualification is recorded in `docs/VALIDATION.md`, the appended evidence ledger, and ignored `.agent-work/milestones/ARM.M02.1B.RUNTIME.PAUSE.RESUME/evidence/`. Human D26 authorized one commit and one ordinary non-force push to this exact development branch after refreshed qualification. The implementation is published on the isolated branch for independent Architect review; no main merge, tag, or release occurred. Historical support STOP remains TRIGGERED/count UNCERTAIN; the checkpoint remains OVERDUE.
+
+
+## ARM.M02.1C ? Windows project management qualification candidate
+
+- Source baseline `d1fe9b1a2629d8c63308a556441aec6130ea00b4`; candidate branch `arm-v2-m02c-project-management-offline-1a`; worktree is isolated from the original main tree.
+- Safe Edit changes only `displayName`; identity-bearing folder, project, endpoint, repository/workspace, secret reference, event, ACK, and pause data are read-only. A stale edit whose displayed name no longer matches stored state is rejected. Dashboard writes serialize with a per-registry OS lock.
+- Remove requires user confirmation, a verified STOPPED shared host, a disabled project, and no M03 detector snapshots/candidates/events, M04 pending/ACK records, pause membership/control references, or competing dashboard mutation. It removes only the v2 registry entry.
+- `Start Project`/`Stop Project` govern the existing validated project-enabled eligibility flag; they do not spawn/stop the shared process or change pause state. Existing global process and Pause/Resume controls remain distinct.
+- Offline Windows qualification: 10 focused and 182 full unittest passes; all seven inherited local demos and the visible Tk project-management demo passed. Exact results/evidence: ignored `.agent-work/milestones/ARM.M02.1C-WINDOWS-PROJECT-MANAGEMENT/evidence/`.
+- The updated instruction now records D26 authorization for one ordinary commit and non-force push of the exact nine-path candidate after fresh requalification. No main merge, tag, release, live Drive, OAuth/DPAPI, real APO, Scheduler/Service, Desktop Bridge, or Orchestrator workflow authority is authorized.

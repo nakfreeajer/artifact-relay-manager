@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 from arm_notification import _read_ledger
 from arm_v2_dashboard import DashboardApp
+import arm_v2_dashboard
 from arm_v2_userhost import load_config, status as host_status, stop as host_stop
 from project_registry import ProjectRegistry
 from tests.mock_apo import SimulatedApo
@@ -70,11 +71,54 @@ def _add(app, project_id, root_id, endpoint, *, prompts=None, reports=None):
 
 def _select(app, project_id):
     app.project_table.selection_set(project_id)
+    app.root.update()
 
 
 def _toggle(app, project_id, enabled):
     _select(app, project_id)
     (app.enable_button if enabled else app.disable_button).invoke()
+    _wait(app, lambda: app.future is None)
+
+
+def _edit_display_name(app, project_id, name):
+    _wait(app, lambda: app.future is None)
+    _select(app, project_id)
+    _wait(app, lambda: app.future is None)
+    _select(app, project_id)
+    app.edit_button.invoke()
+    dialogs = [child for child in app.root.winfo_children()
+               if child.winfo_class() == "Toplevel" and child.title() == "Edit project display name"]
+    if not dialogs:
+        raise AssertionError(f"edit dialog did not open: selected={app.project_table.selection()}, "
+                             f"button={app.edit_button.cget('state')}, "
+                             f"projects={[p['projectId'] for p in app.latest['projects']]}")
+    dialog = dialogs[0]
+    def descendants(widget):
+        result = []
+        for child in widget.winfo_children():
+            result.append(child)
+            result.extend(descendants(child))
+        return result
+    widgets = descendants(dialog)
+    entry = next(widget for widget in widgets if widget.winfo_class() == "TEntry")
+    entry.delete(0, "end")
+    entry.insert(0, name)
+    next(widget for widget in widgets if widget.winfo_class() == "TButton"
+         and widget.cget("text") == "Save").invoke()
+    _wait(app, lambda: app.future is None)
+
+
+def _remove_confirmed(app, project_id):
+    _wait(app, lambda: app.future is None)
+    _select(app, project_id)
+    _wait(app, lambda: app.future is None)
+    _select(app, project_id)
+    original = arm_v2_dashboard.messagebox.askyesno
+    arm_v2_dashboard.messagebox.askyesno = lambda *args, **kwargs: True
+    try:
+        app.remove_button.invoke()
+    finally:
+        arm_v2_dashboard.messagebox.askyesno = original
     _wait(app, lambda: app.future is None)
 
 
@@ -157,7 +201,8 @@ def main():
         _write(config_path, {"schemaVersion": 1, "registryPath": str(registry_path),
             "detectorStatePath": str(detector_path), "notificationLedgerPath": str(ledger_path),
             "providerFixturePath": str(worker_fixture),
-            "testSecrets": {ref: base64.b64encode(key).decode("ascii") for ref, key in KEYS.items()},
+            "testSecrets": {ref: base64.b64encode(key).decode("ascii")
+                            for ref, key in {**KEYS, "test:project-c": KEYS["test:project-a"]}.items()},
             "intervalSeconds": 1, "stopTimeoutSeconds": 8})
 
         app = _new_app(config_path, folder_fixture_path)
@@ -181,7 +226,59 @@ def main():
         assert [item["projectId"] for item in app.latest["projects"]] == ["project-a", "project-b"]
         assert all(not item["enabled"] for item in app.latest["projects"])
 
-        _toggle(app, "project-a", True)
+        # Exercise the actual Tk edit dialog and confirmed removal of an unused project.
+        c_folders = folder_fixture()
+        c_folders["items"].extend([
+            {"id": "root-c", "name": "Project C", "mimeType": "application/vnd.google-apps.folder",
+             "trashed": False, "parents": []},
+            {"id": "prompts-c", "name": "Architect_Prompts", "mimeType": "application/vnd.google-apps.folder",
+             "trashed": False, "parents": ["root-c"]},
+            {"id": "reports-c", "name": "Executor_Reports", "mimeType": "application/vnd.google-apps.folder",
+             "trashed": False, "parents": ["root-c"]},
+        ])
+        _write(folder_fixture_path, c_folders)
+        _add(app, "project-c", "root-c", apo_a.url)
+        registry_before_edit = ProjectRegistry(registry_path).show_folder_project("project-a")
+        stale_window = DashboardApp(tk.Toplevel(app.root), config_path, folder_fixture_path)
+        _wait(stale_window, lambda: stale_window.future is None)
+        stale_name = stale_window.latest["projects"][0]["displayName"]
+        if stale_window._auto_refresh_id is not None:
+            stale_window.root.after_cancel(stale_window._auto_refresh_id)
+            stale_window._auto_refresh_id = None
+        _edit_display_name(app, "project-a", "Renamed Project A")
+        registry_after_edit = ProjectRegistry(registry_path).show_folder_project("project-a")
+        assert registry_after_edit["displayName"] == "Renamed Project A"
+        assert {key: value for key, value in registry_after_edit.items() if key != "displayName"} == {
+            key: value for key, value in registry_before_edit.items() if key != "displayName"}
+        _select(stale_window, "project-a")
+        stale_window.edit_button.invoke()
+        stale_dialog = next(child for child in stale_window.root.winfo_children()
+            if child.winfo_class() == "Toplevel" and child.title() == "Edit project display name")
+        def nested_widgets(widget):
+            result = []
+            for child in widget.winfo_children():
+                result.append(child)
+                result.extend(nested_widgets(child))
+            return result
+        stale_widgets = nested_widgets(stale_dialog)
+        stale_entry = next(widget for widget in stale_widgets if widget.winfo_class() == "TEntry")
+        stale_entry.delete(0, "end")
+        stale_entry.insert(0, "Stale " + stale_name)
+        next(widget for widget in stale_widgets if widget.winfo_class() == "TButton"
+             and widget.cget("text") == "Save").invoke()
+        assert ProjectRegistry(registry_path).show_folder_project("project-a")["displayName"] == "Renamed Project A"
+        assert "edit refused" in stale_window.notice_text.get().lower()
+        stale_window.close()
+        _remove_confirmed(app, "project-c")
+        _write(folder_fixture_path, folder_fixture())
+        assert [item["projectId"] for item in ProjectRegistry(registry_path).list_folder_projects()] == [
+            "project-a", "project-b"]
+        output["projectManagement"] = {"editedA": True, "immutableIdentityPreserved": True,
+                                      "twoWindowStaleEditRejected": True,
+                                      "confirmedUnusedCRemoval": True, "runningWorkerRemovalRefused": True,
+                                      "historyBearingRemovalRefused": True, "stateFilesDeleted": False}
+
+        _toggle(app, "project-a", True)  # real Start Project callback
         _toggle(app, "project-b", True)
         registry_after_enable = ProjectRegistry(registry_path).load()
         assert registry_after_enable["projects"] == legacy_before
@@ -201,6 +298,9 @@ def main():
         initial = host_status(config_path)
         assert initial["status"] in {"RUNNING", "DEGRADED"} and initial["pid"] == worker_pid
         registry_while_running = registry_path.read_bytes()
+        _remove_confirmed(app, "project-b")
+        assert registry_path.read_bytes() == registry_while_running
+        assert "refused" in app.notice_text.get().lower()
         _add(app, "project-c", "root-a", apo_a.url)
         assert registry_path.read_bytes() == registry_while_running
         assert "rejected" in app.notice_text.get().lower()
@@ -271,6 +371,10 @@ def main():
         _wait(app, lambda: app.future is None and app.latest is not None
               and app.latest["host"].get("status") == "STOPPED", timeout=15)
         worker_started = False
+        registry_with_pending_b = registry_path.read_bytes()
+        _remove_confirmed(app, "project-b")
+        assert registry_path.read_bytes() == registry_with_pending_b
+        assert "refused" in app.notice_text.get().lower()
         detector_after_stop = load_config(config_path).detector_path.read_bytes()
         ledger_after_stop = load_config(config_path).ledger_path.read_bytes()
         app.close()

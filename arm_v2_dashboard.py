@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from urllib.parse import urlsplit
 
 import arm_notification
@@ -144,6 +144,7 @@ class DashboardApp:
         self.latest = None
         self.last_error = None
         self._pending_control_watch = None
+        self._auto_refresh_id = None
         self.status_text = tk.StringVar(value="Loading offline project status…")
         self.notice_text = tk.StringVar(value="FIXTURE / OFFLINE ONLY — NOT LIVE DRIVE / APO")
         self.pending_text = tk.StringVar(value="Pending: —    Acknowledged: —")
@@ -156,7 +157,7 @@ class DashboardApp:
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._queue_refresh()
-        self.root.after(1000, self._auto_refresh)
+        self._auto_refresh_id = self.root.after(1000, self._auto_refresh)
 
     def _build(self):
         outer = ttk.Frame(self.root, padding=12)
@@ -197,9 +198,9 @@ class DashboardApp:
         self.project_table.pack(fill="x", pady=(4, 6))
         row_controls = ttk.Frame(left)
         row_controls.pack(fill="x")
-        self.enable_button = ttk.Button(row_controls, text="Enable Selected", command=lambda: self._set_enabled(True))
+        self.enable_button = ttk.Button(row_controls, text="Start Project", command=lambda: self._set_enabled(True))
         self.enable_button.pack(side="left", padx=(0, 6))
-        self.disable_button = ttk.Button(row_controls, text="Disable Selected", command=lambda: self._set_enabled(False))
+        self.disable_button = ttk.Button(row_controls, text="Stop Project", command=lambda: self._set_enabled(False))
         self.disable_button.pack(side="left", padx=6)
         self.pause_project_button = ttk.Button(row_controls, text="Pause Selected",
             command=lambda: self._queue_selected_control("pause"))
@@ -207,7 +208,10 @@ class DashboardApp:
         self.resume_project_button = ttk.Button(row_controls, text="Resume Selected",
             command=lambda: self._queue_selected_control("resume"))
         self.resume_project_button.pack(side="left", padx=6)
-        ttk.Label(row_controls, text="Remove: not yet available; guarded removal is deferred.").pack(side="right")
+        self.edit_button = ttk.Button(row_controls, text="Edit Display Name", command=self.edit_selected)
+        self.edit_button.pack(side="left", padx=6)
+        self.remove_button = ttk.Button(row_controls, text="Remove Selected", command=self.remove_selected)
+        self.remove_button.pack(side="left", padx=6)
         ttk.Label(left, text="Selected project details", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 2))
         self.details = tk.Text(left, height=10, wrap="word", state="disabled", font=("Consolas", 9))
         self.details.pack(fill="x")
@@ -249,6 +253,8 @@ class DashboardApp:
                        self.pause_all_button, self.resume_all_button,
                        self.pause_project_button, self.resume_project_button):
             button.configure(state=state)
+        for button in (self.enable_button, self.disable_button, self.edit_button, self.remove_button):
+            button.configure(state=state)
 
     def _queue_refresh(self):
         if self.future is not None:
@@ -262,7 +268,7 @@ class DashboardApp:
             self._queue_refresh()
         try:
             if self.root.winfo_exists():
-                self.root.after(1000, self._auto_refresh)
+                self._auto_refresh_id = self.root.after(1000, self._auto_refresh)
         except tk.TclError:
             return
 
@@ -416,8 +422,7 @@ class DashboardApp:
             self._write_details(current[selected_project_id])
         elif current:
             self._write_details(next(iter(current.values())))
-        self.enable_button.configure(state="normal")
-        self.disable_button.configure(state="normal")
+        self._update_project_controls()
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="normal")
         active = host.get("status") in {"RUNNING", "PAUSED", "DEGRADED"}
@@ -444,6 +449,7 @@ class DashboardApp:
         self.details.configure(state="disabled")
 
     def _show_selected(self, _event=None):
+        self._update_project_controls()
         if not self.latest:
             return
         selected = self.project_table.selection()
@@ -452,6 +458,15 @@ class DashboardApp:
         project = next((item for item in self.latest["projects"] if item["projectId"] == selected[0]), None)
         if project:
             self._write_details(project)
+
+    def _update_project_controls(self):
+        selected = self._selected_project()
+        project = next((item for item in (self.latest or {}).get("projects", [])
+                        if item["projectId"] == selected), None)
+        self.enable_button.configure(state="normal" if project and not project["enabled"] else "disabled")
+        self.disable_button.configure(state="normal" if project and project["enabled"] else "disabled")
+        self.edit_button.configure(state="normal" if project else "disabled")
+        self.remove_button.configure(state="normal" if project else "disabled")
 
     def _selected_project(self):
         selected = self.project_table.selection()
@@ -471,24 +486,26 @@ class DashboardApp:
 
     def add_project(self):
         try:
-            config = self._configuration_gate()
-            if not self.folder_validation_fixture.is_file():
-                raise DashboardError("folder validation fixture is unavailable")
-            provider = FakeDriveProvider.from_path(self.folder_validation_fixture)
-            endpoint = _loopback_endpoint(self.form["endpoint"].get().strip())
-            secret_ref = self.form["secretRef"].get().strip()
-            if secret_ref not in config.test_secrets:
-                raise DashboardError("configured test secret reference is unavailable")
-            registry = ProjectRegistry(config.registry_path)
-            registry.configure_folder_project(
-                project_id=self.form["projectId"].get().strip(),
-                display_name=self.form["displayName"].get().strip(),
-                root_url=self.form["rootUrl"].get().strip(),
-                prompts_id=self.form["promptsId"].get().strip(),
-                reports_id=self.form["reportsId"].get().strip(), endpoint=endpoint,
-                provider=provider, repository=self.form["repository"].get().strip() or None,
-                workspace=self.form["workspace"].get().strip() or None,
-                secret_ref=secret_ref, enabled=False)
+            registry = ProjectRegistry(arm_v2_userhost.load_config(self.config_path).registry_path)
+            def save():
+                config = self._configuration_gate()
+                if not self.folder_validation_fixture.is_file():
+                    raise DashboardError("folder validation fixture is unavailable")
+                provider = FakeDriveProvider.from_path(self.folder_validation_fixture)
+                endpoint = _loopback_endpoint(self.form["endpoint"].get().strip())
+                secret_ref = self.form["secretRef"].get().strip()
+                if secret_ref not in config.test_secrets:
+                    raise DashboardError("configured test secret reference is unavailable")
+                registry.configure_folder_project(
+                    project_id=self.form["projectId"].get().strip(),
+                    display_name=self.form["displayName"].get().strip(),
+                    root_url=self.form["rootUrl"].get().strip(),
+                    prompts_id=self.form["promptsId"].get().strip(),
+                    reports_id=self.form["reportsId"].get().strip(), endpoint=endpoint,
+                    provider=provider, repository=self.form["repository"].get().strip() or None,
+                    workspace=self.form["workspace"].get().strip() or None,
+                    secret_ref=secret_ref, enabled=False)
+            registry.dashboard_write(save)
             self.notice_text.set("Project validated offline and saved DISABLED.")
             self._queue_refresh()
         except Exception:
@@ -500,22 +517,101 @@ class DashboardApp:
             self.notice_text.set("Select a project first.")
             return
         try:
-            if self.latest is None:
-                raise DashboardError("LOCAL_STATE_INVALID")
-            config = arm_v2_userhost.load_config(self.config_path)
-            _state_files(config)
-            registry = ProjectRegistry(config.registry_path)
-            provider = FakeDriveProvider.from_path(self.folder_validation_fixture)
-            registry.validate_folder_projects(provider, project_id)
-            registry.set_folder_project_enabled(project_id, enabled)
-            self.notice_text.set("Project enabled after local folder identity validation." if enabled
-                                 else "Project disabled; pending and acknowledged event metadata were preserved.")
+            registry = ProjectRegistry(arm_v2_userhost.load_config(self.config_path).registry_path)
+            def change():
+                if self.latest is None:
+                    raise DashboardError("LOCAL_STATE_INVALID")
+                config = arm_v2_userhost.load_config(self.config_path)
+                _state_files(config)
+                provider = FakeDriveProvider.from_path(self.folder_validation_fixture)
+                registry.validate_folder_projects(provider, project_id)
+                registry.set_folder_project_enabled(project_id, enabled)
+            registry.dashboard_write(change)
+            self.notice_text.set("Project started; monitoring eligibility enabled." if enabled
+                                 else "Project stopped at the next monitor boundary; durable events were preserved.")
             self._queue_refresh()
         except Exception:
-            self.notice_text.set("Project change rejected; local state or folder validation failed closed.")
+            self.notice_text.set("Project Start/Stop rejected; local state or folder validation failed closed.")
+
+    def edit_selected(self):
+        project_id = self._selected_project()
+        project = next((row for row in (self.latest or {}).get("projects", [])
+                        if row["projectId"] == project_id), None)
+        if project is None:
+            self.notice_text.set("Select a project first.")
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Edit project display name")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        value = tk.StringVar(value=project["displayName"])
+        ttk.Label(dialog, text="Display name").pack(anchor="w", padx=12, pady=(12, 2))
+        entry = ttk.Entry(dialog, textvariable=value, width=42)
+        entry.pack(fill="x", padx=12)
+        entry.focus_set()
+        def save():
+            try:
+                registry = ProjectRegistry(arm_v2_userhost.load_config(self.config_path).registry_path)
+                registry.dashboard_write(lambda: registry.edit_folder_project_display_name(
+                    project_id, value.get(), expected_display_name=project["displayName"]))
+                self.notice_text.set("Display name saved; identity and transport state were preserved.")
+                dialog.destroy()
+                self._queue_refresh()
+            except Exception:
+                self.notice_text.set("Edit refused; project changed or local state is invalid. Refresh and retry.")
+                dialog.destroy()
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=12)
+        ttk.Button(buttons, text="Save", command=save).pack(side="right")
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=6)
+
+    def remove_selected(self):
+        project_id = self._selected_project()
+        if not project_id:
+            self.notice_text.set("Select a project first.")
+            return
+        if not messagebox.askyesno("Remove project", "Remove this unused project configuration? No files will be deleted.", parent=self.root):
+            return
+        try:
+            registry = ProjectRegistry(arm_v2_userhost.load_config(self.config_path).registry_path)
+            def remove_if_unused():
+                config = arm_v2_userhost.load_config(self.config_path)
+                if arm_v2_userhost.status(self.config_path).get("status") != "STOPPED":
+                    raise DashboardError("monitor must be stopped")
+                document = registry.load()
+                project = next((item for item in document["folderProjects"]
+                                if item["projectId"] == project_id), None)
+                if project is None or project["enabled"]:
+                    raise DashboardError("project is not removable")
+                detector, ledger = _state_files(config)
+                has_detector_state = (any(event["projectId"] == project_id for event in detector["events"])
+                    or any(folder["projectId"] == project_id for folder in detector["folders"].values())
+                    or any(item["projectId"] == project_id for item in detector["ambiguous"]))
+                if has_detector_state:
+                    raise DashboardError("project has detector history")
+                if any(entry["projectId"] == project_id for entry in ledger["entries"].values()):
+                    raise DashboardError("project has notification history")
+                ids = [item["projectId"] for item in document["folderProjects"]]
+                pause = config.pause_store.load(ids)
+                refs = (pause.get("pendingRequest"), pause.get("lastAppliedRequest"))
+                if (project_id in pause["pausedProjectIds"] or any(
+                        isinstance(ref, dict) and ref.get("projectId") == project_id for ref in refs)):
+                    raise DashboardError("project has pause-control history")
+                registry.remove_folder_project(project_id)
+            registry.dashboard_write(remove_if_unused)
+            self.notice_text.set("Unused project removed. No project or state files were deleted.")
+            self._queue_refresh()
+        except Exception:
+            self.notice_text.set("Removal refused: worker, history, control state, or project validation gate failed.")
 
     def close(self):
         # Closing the dashboard intentionally leaves the independent M05 worker alone.
+        if self._auto_refresh_id is not None:
+            try:
+                self.root.after_cancel(self._auto_refresh_id)
+            except tk.TclError:
+                pass
+            self._auto_refresh_id = None
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 

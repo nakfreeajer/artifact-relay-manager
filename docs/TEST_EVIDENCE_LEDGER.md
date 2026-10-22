@@ -132,3 +132,13 @@ Append-only milestone verification records. Detailed sanitized outputs remain in
 - Requalification: focused suite 24/24; full discovery 179/179; all six inherited demos and the visible Windows pause/resume demo exited 0; py_compile and diff checks passed. Pending B event ID `m03-d20ab0b353254edc4e31ef3b960d152713bbca5f60d0d3aac0cb12f055f1f406` was retained across pause/retry and acknowledged on attempt 2.
 - Exact local commit SHA, direct parent, remote branch SHA, and committed file list are recorded in the sanitized Executor publication report under ignored `.agent-work/milestones/ARM.M02.1B.RUNTIME.PAUSE.RESUME/evidence/`.
 - No live Drive/OAuth/DPAPI/real APO, public network, Scheduler/service/startup/system changes, main merge, tag, or Orchestrator workflow authority. Historical support STOP remains TRIGGERED/count UNCERTAIN; checkpoint OVERDUE.
+
+
+### ARM.M02.1C Windows project management ? 2026-10-22
+
+- Baseline `d1fe9b1a2629d8c63308a556441aec6130ea00b4`; branch `arm-v2-m02c-project-management-offline-1a`.
+- Focused dashboard tests: 10/10; full discovery: 182/182. Windows visible Tk demo passed and recorded metadata-only outcome.
+- Added coverage for display-name-only editing, stale edit rejection, guarded removal with a pause reference, refusal with project history, and Start/Stop eligibility preserving pause state.
+- Visible result: display name updated while immutable identity fields remained equal; unused project C removed only after confirmation; removal refused with byte-identical registry while worker ran and later when project B retained detector/notification history; no referenced files deleted. Existing simulated APO, reattach, isolation, and pause/resume demonstrations remained passing.
+- Sanitized command output and CLI demo result files are in ignored `.agent-work/milestones/ARM.M02.1C-WINDOWS-PROJECT-MANAGEMENT/evidence/`. No Drive/OAuth/DPAPI/real APO or external network activity.
+- Local candidate only; no D26 branch publication authorization, commit, or push.

@@ -363,3 +363,14 @@ This qualifies the current Windows Tk implementation and M05 fixture process onl
 - Initial timeout regression invocation exposed a missing `time` import in the test; the import was corrected, and the exact CLI timeout/same-request eventual-apply test then passed. An earlier visible demo had test-harness timing/control invocation issues; waits were bounded to the UI worker state and the repeated final visible demo passed. No implementation redesign was needed for those harness corrections.
 - Evidence logs/report are in ignored `.agent-work/milestones/ARM.M02.1B.RUNTIME.PAUSE.RESUME/evidence/`.
 - Human D26 authorized exactly one commit and one ordinary non-force push to this development branch. The implementation was published on the authorized branch after requalification; no merge, tag, or release occurred. No live Drive/OAuth/DPAPI/real APO, Scheduler/service/startup, public endpoint, or project-Orchestrator workflow authority was exercised or added. Historical support STOP remains TRIGGERED/count UNCERTAIN and checkpoint OVERDUE.
+
+
+## ARM.M02.1C Windows project management ? offline candidate (2026-10-22)
+
+- Focused: `python -m unittest tests.test_arm_v2_dashboard -v` ? 10 run, 10 passed, 0 failures/errors/skips.
+- Full: `python -m unittest discover -s tests -v` ? 182 run, 182 passed, 0 failures/errors/skips.
+- Visible qualification: `python tests/arm_v2_dashboard_cli_demo.py` ? exit 0, `PASS_VISIBLE_WINDOWS_DASHBOARD_OFFLINE`; actual Tk controls/dialogs and local fixture worker used. The result proved safe display-name edit, confirmed unused project removal, refusal while the shared worker was running, refusal with M03/M04 history after stop, unchanged project identities, preserved unrelated legacy project, peer progress and pending-event isolation, and unchanged Pause/Resume semantics.
+- Seven inherited demonstrations: project configuration, Drive detection, notification/ACK, foreground cycle, detached UserHost process, dashboard, and pause/resume; all run outcomes are recorded in `.agent-work/milestones/ARM.M02.1C-WINDOWS-PROJECT-MANAGEMENT/evidence/demo-summary.json`.
+- `python -m py_compile arm_v2_dashboard.py project_registry.py tests/test_arm_v2_dashboard.py tests/arm_v2_dashboard_cli_demo.py` and `git diff --check` passed.
+- Validation was local/offline with loopback simulated APOs and test-only secret references. No live provider credentials/session, Google Drive, external endpoint, real APO, Scheduler/Service, or Orchestrator workflow execution.
+- The updated instruction records Human D26 authorization for one ordinary commit and non-force push of the exact nine-path candidate after fresh requalification. This does not authorize a main merge, tag, release, or live operation.

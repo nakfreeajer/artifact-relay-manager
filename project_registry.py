@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 import drive_adapter
@@ -186,6 +187,53 @@ class ProjectRegistry:
             self.path = Path(raw_path).resolve()
         except (OSError, RuntimeError, ValueError):
             raise ProjectRegistryError("invalid registry path") from None
+        self.write_lock_path = self.path.with_name(self.path.name + ".dashboard.lock")
+
+    def dashboard_write(self, operation):
+        """Serialize dashboard read/validate/write transactions across windows."""
+        from relay_userhost import SingleInstanceLock
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = SingleInstanceLock(self.write_lock_path)
+        deadline = time.monotonic() + 3.0
+        while not lock.acquire():
+            if time.monotonic() >= deadline:
+                raise ProjectRegistryError("another dashboard update is in progress")
+            time.sleep(0.02)
+        try:
+            return operation()
+        finally:
+            lock.release()
+
+    def edit_folder_project_display_name(self, project_id, display_name, *, expected_display_name):
+        if (not isinstance(project_id, str) or not isinstance(expected_display_name, str)
+                or not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 200
+                or any(ord(ch) < 32 for ch in display_name)):
+            raise ProjectRegistryError("invalid displayName edit")
+        current = self.load()
+        updated = []
+        found = False
+        for entry in current["folderProjects"]:
+            item = dict(entry)
+            if item["projectId"] == project_id:
+                found = True
+                if item["displayName"] != expected_display_name:
+                    raise ProjectRegistryError("project changed in another dashboard; refresh before editing")
+                item["displayName"] = display_name.strip()
+            updated.append(item)
+        if not found:
+            raise ProjectRegistryError("projectId is not registered")
+        candidate = _validate_document({"schemaVersion": CURRENT_SCHEMA_VERSION,
+            "projects": current["projects"], "folderProjects": updated})
+        return self._write_document(candidate)
+
+    def remove_folder_project(self, project_id):
+        current = self.load()
+        updated = [item for item in current["folderProjects"] if item["projectId"] != project_id]
+        if len(updated) == len(current["folderProjects"]):
+            raise ProjectRegistryError("projectId is not registered")
+        candidate = _validate_document({"schemaVersion": CURRENT_SCHEMA_VERSION,
+            "projects": current["projects"], "folderProjects": updated})
+        return self._write_document(candidate)
 
     def load(self):
         if not self.path.exists():
