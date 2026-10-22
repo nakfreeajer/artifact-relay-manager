@@ -232,6 +232,25 @@ class ProjectRegistry:
                 return entry
         raise ProjectRegistryError("projectId is not registered")
 
+    def set_folder_project_enabled(self, project_id, enabled):
+        """Atomically update one v2 folder project without touching legacy projects."""
+        if not isinstance(project_id, str) or type(enabled) is not bool:
+            raise ProjectRegistryError("invalid folder project enable request")
+        document = self.load()
+        found = False
+        updated = []
+        for entry in document["folderProjects"]:
+            item = dict(entry)
+            if item["projectId"] == project_id:
+                item["enabled"] = enabled
+                found = True
+            updated.append(item)
+        if not found:
+            raise ProjectRegistryError("projectId is not registered")
+        candidate = _validate_document({"schemaVersion": CURRENT_SCHEMA_VERSION,
+            "projects": document["projects"], "folderProjects": updated})
+        return self._write_document(candidate)
+
     def configure_folder_project(self, *, project_id, display_name, root_url, prompts_id, reports_id,
                                  endpoint, provider, repository=None, workspace=None, secret_ref=None,
                                  enabled=False):
