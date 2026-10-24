@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime
+import hashlib
+import hmac
 import json
 import os
 from contextlib import ExitStack
@@ -15,10 +18,24 @@ import tkinter as tk
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from arm_notification import _read_ledger
+EXPECTED_ARRIVAL_EVENT_IDS = {
+    ("project-a", "PROMPT_CHANGED", "new-prompt-a"):
+        "m03-ccdf09b56f60af21d3b10b621cbfe2980b8ac07cbe35731be1198bfc8987af9e",
+    ("project-a", "REPORT_CHANGED", "new-report-a"):
+        "m03-dd8f218beb91b39eb62e222aae469b0a0451a1160fea20c1887c694dd491e344",
+    ("project-b", "PROMPT_CHANGED", "new-prompt-b"):
+        "m03-3d8fe0cfc7f434d9b069fa2209ba458c253350801a52b57979a3104bbf251dc8",
+    ("project-b", "REPORT_CHANGED", "moved-in-report-b"):
+        "m03-d20ab0b353254edc4e31ef3b960d152713bbca5f60d0d3aac0cb12f055f1f406",
+}
+PENDING_ARRIVAL = ("project-b", "PROMPT_CHANGED", "new-prompt-b")
+
+from arm_notification import _canonical_json, _read_ledger
+from drive_change_detector import _json_load as _read_detector_state, _validate_state as _validate_detector_state
 from arm_v2_dashboard import DashboardApp
 import arm_v2_dashboard
-from arm_v2_userhost import load_config, status as host_status, stop as host_stop
+from arm_v2_userhost import (SingleInstanceLock, load_config, status as host_status,
+                             stop as host_stop)
 from project_registry import ProjectRegistry
 from tests.mock_apo import SimulatedApo
 from tests.test_arm_foreground import KEYS, folder_fixture, snapshots
@@ -74,10 +91,232 @@ def _select(app, project_id):
     app.root.update()
 
 
-def _toggle(app, project_id, enabled):
+def _notice_class(value):
+    text = value.casefold()
+    if "rejected" in text or "refused" in text or "invalid" in text:
+        return "rejected_or_invalid"
+    if "started" in text or "enabled" in text or "stopped" in text:
+        return "action_result"
+    if "fixture" in text or "offline" in text:
+        return "fixture_notice"
+    return "empty_or_other"
+
+
+def _enablement_snapshot(app, registry, project_id, button, fixture_path, legacy_before):
+    try:
+        document = registry.load()
+        enabled = {item["projectId"]: item["enabled"] for item in document["folderProjects"]}
+        legacy_unchanged = document["projects"] == legacy_before
+    except Exception:
+        enabled = None
+        legacy_unchanged = False
+    latest = app.latest if isinstance(app.latest, dict) else None
+    latest_project = next((item for item in (latest or {}).get("projects", [])
+                           if item.get("projectId") == project_id), None)
+    future = app.future
+    lock = SingleInstanceLock(registry.write_lock_path)
+    lock_acquired = lock.acquire()
+    if lock_acquired:
+        lock.release()
+    try:
+        observed_host = host_status(app.config_path).get("status")
+    except Exception:
+        observed_host = "STATUS_UNAVAILABLE"
+    return {
+        "selectedProjectId": app._selected_project(),
+        "buttonState": str(button.cget("state")),
+        "buttonDisabled": bool(button.instate(["disabled"])),
+        "pendingRefresh": future is not None and not future.done(),
+        "futurePresent": future is not None,
+        "latestHasSnapshot": latest is not None,
+        "latestProjectEnabled": latest_project.get("enabled") if latest_project else None,
+        "latestProjectIssueClass": latest_project.get("lastIssue") if latest_project else None,
+        "rootWindowState": app.root.state(),
+        "noticeClass": _notice_class(app.notice_text.get()),
+        "lastErrorClass": app.last_error,
+        "fixtureAvailable": fixture_path.is_file(),
+        "registryEnabledValues": enabled,
+        "legacyArrayUnchanged": legacy_unchanged,
+        "registryLockContended": not lock_acquired,
+        "hostStatusFromSnapshot": (latest or {}).get("host", {}).get("status"),
+        "hostStatusIndependentRead": observed_host,
+    }
+
+
+def _dashboard_lock_is_free(registry):
+    probe = SingleInstanceLock(registry.write_lock_path)
+    if not probe.acquire():
+        return False
+    probe.release()
+    return True
+
+
+def _toggle(app, project_id, enabled, legacy_before):
     _select(app, project_id)
-    (app.enable_button if enabled else app.disable_button).invoke()
-    _wait(app, lambda: app.future is None)
+    registry_path = load_config(app.config_path).registry_path
+    registry = ProjectRegistry(registry_path)
+    button = app.enable_button if enabled else app.disable_button
+    before_actionable_wait = _enablement_snapshot(app, registry, project_id, button,
+                                                 app.folder_validation_fixture, legacy_before)
+
+    def actionable():
+        project = next((item for item in (app.latest or {}).get("projects", [])
+                        if item.get("projectId") == project_id), None)
+        try:
+            registry_enabled = registry.show_folder_project(project_id)["enabled"]
+        except Exception:
+            return False
+        return (app._selected_project() == project_id and app.future is None and project is not None
+                and project.get("enabled") is (not enabled) and registry_enabled is (not enabled)
+                and str(button.cget("state")) == "normal" and not button.instate(["disabled"])
+                and _dashboard_lock_is_free(registry))
+
+    try:
+        _wait(app, actionable)
+    except Exception as exc:
+        trace = {"projectId": project_id, "targetEnabled": enabled,
+                 "phase": "wait_for_actionable_real_button", "timeoutOrError": type(exc).__name__,
+                 "beforeActionableWait": before_actionable_wait,
+                 "atFailure": _enablement_snapshot(app, registry, project_id, button,
+                                                    app.folder_validation_fixture, legacy_before)}
+        raise AssertionError("project enablement readiness diagnostic: " +
+                             json.dumps(trace, sort_keys=True, separators=(",", ":"))) from None
+    before = _enablement_snapshot(app, registry, project_id, button,
+                                  app.folder_validation_fixture, legacy_before)
+    if (before["selectedProjectId"] != project_id or before["buttonDisabled"]
+            or before["futurePresent"] or before["registryEnabledValues"].get(project_id) is enabled
+            or not _dashboard_lock_is_free(registry)):
+        raise AssertionError("project enablement control became unavailable before invoke: " +
+                             json.dumps(before, sort_keys=True, separators=(",", ":")))
+    invoke_result = button.invoke()  # retain the actual visible Tk widget action
+    after_invoke = _enablement_snapshot(app, registry, project_id, button,
+                                        app.folder_validation_fixture, legacy_before)
+    trace = {"projectId": project_id, "targetEnabled": enabled,
+             "beforeActionableWait": before_actionable_wait,
+             "beforeInvoke": before, "afterInvoke": after_invoke,
+             "invokeReturnedEmpty": invoke_result == ""}
+    try:
+        _wait(app, lambda: registry.show_folder_project(project_id)["enabled"] is enabled)
+        _wait(app, lambda: app.future is None and isinstance(app.latest, dict)
+              and next((item for item in app.latest["projects"]
+                        if item.get("projectId") == project_id), {}).get("enabled") is enabled)
+        refreshed = arm_v2_dashboard.dashboard_snapshot(app.config_path)
+        independent = next((item for item in refreshed["projects"]
+                            if item.get("projectId") == project_id), None)
+        if independent is None or independent.get("enabled") is not enabled:
+            raise AssertionError("independent refreshed snapshot disagreed")
+    except Exception as exc:
+        trace["timeoutOrError"] = type(exc).__name__
+        trace["atFailure"] = _enablement_snapshot(app, registry, project_id, button,
+                                                   app.folder_validation_fixture, legacy_before)
+        raise AssertionError("project enablement diagnostic: " +
+                             json.dumps(trace, sort_keys=True, separators=(",", ":"))) from None
+    trace["persistedEnabled"] = registry.show_folder_project(project_id)["enabled"]
+    trace["refreshedSnapshotEnabled"] = independent["enabled"]
+    return trace
+
+
+def _arrival_checkpoint(app, apo_a, apo_b, *, allow_pending_ack_after_drop=False):
+    """Read explicit detector/ledger identities and receiver dispositions."""
+    config = load_config(app.config_path)
+    detector = _validate_detector_state(_read_detector_state(config.detector_path))
+    ledger = _read_ledger(config.ledger_path)
+    expected_files = {identity[2] for identity in EXPECTED_ARRIVAL_EVENT_IDS}
+    found = {}
+    for event in detector["events"]:
+        if event["changeKind"] == "ARRIVED" and event["fileId"] in expected_files:
+            key = (event["projectId"], event["eventType"], event["fileId"])
+            found.setdefault(key, []).append(event)
+
+    def receiver(apo):
+        with apo.lock:
+            return {
+                "requestCount": apo.request_count,
+                "uniqueProcessedCount": apo.processed_count,
+                "acceptedEvents": {event_id: {
+                    "projectId": item.get("projectId"), "eventType": item.get("eventType"),
+                    "fileId": item.get("fileId"),
+                } for event_id, item in apo.receipts["receipts"].items()},
+            }
+
+    receivers = {"project-a": receiver(apo_a), "project-b": receiver(apo_b)}
+    rows = []
+    ready = True
+    for identity, expected_id in EXPECTED_ARRIVAL_EVENT_IDS.items():
+        project_id, event_type, file_id = identity
+        matches = found.get(identity, [])
+        event_id = matches[0].get("eventId") if len(matches) == 1 else None
+        entry = ledger["entries"].get(expected_id)
+        accepted = receivers[project_id]["acceptedEvents"].get(expected_id)
+        other_project = "project-b" if project_id == "project-a" else "project-a"
+        accepted_elsewhere = expected_id in receivers[other_project]["acceptedEvents"]
+        expected_status = "PENDING" if identity == PENDING_ARRIVAL else "ACKED"
+        if (identity == PENDING_ARRIVAL and allow_pending_ack_after_drop
+                and entry and entry.get("status") == "ACKED"):
+            expected_status = "ACKED"
+        ack_valid = False
+        if entry and entry.get("receipt"):
+            proof = {"projectId": project_id, "eventId": expected_id}
+            signature = hmac.new(KEYS[f"test:{project_id}"], _canonical_json(proof),
+                                 hashlib.sha256).hexdigest()
+            ack_valid = hmac.compare_digest(entry["receipt"].get("signature", ""), signature)
+        valid = bool(
+            len(matches) == 1 and event_id == expected_id and entry
+            and entry.get("eventId") == expected_id and entry.get("projectId") == project_id
+            and entry.get("payload", {}).get("projectId") == project_id
+            and entry.get("payload", {}).get("eventType") == event_type
+            and entry.get("payload", {}).get("fileId") == file_id
+            and entry.get("status") == expected_status and accepted
+            and accepted.get("projectId") == project_id
+            and accepted.get("eventType") == event_type
+            and accepted.get("fileId") == file_id and not accepted_elsewhere
+        )
+        if identity == PENDING_ARRIVAL and expected_status == "PENDING":
+            valid = bool(valid and entry.get("attemptCount") == 1
+                         and entry.get("lastErrorClass") == "TRANSPORT_UNCERTAIN"
+                         and entry.get("receipt") is None)
+        elif identity == PENDING_ARRIVAL:
+            valid = bool(allow_pending_ack_after_drop and valid
+                         and entry.get("attemptCount", 0) >= 2
+                         and entry.get("receipt") is not None and ack_valid)
+        else:
+            valid = bool(valid and entry.get("receipt") is not None and ack_valid)
+        ready = ready and valid
+        rows.append({
+            "projectId": project_id, "eventType": event_type, "fileId": file_id,
+            "eventId": expected_id, "m03EventId": event_id,
+            "ledgerStatus": entry.get("status") if entry else "NOT_QUEUED",
+            "attemptCount": entry.get("attemptCount") if entry else None,
+            "lastErrorClass": entry.get("lastErrorClass") if entry else None,
+            "receiptPresent": bool(entry and entry.get("receipt")),
+            "receiptReceivedAt": (entry.get("receipt", {}).get("receivedAt")
+                                  if entry and entry.get("receipt") else None),
+            "ledgerUpdatedAt": entry.get("updatedAt") if entry else None,
+            "authenticatedAck": ack_valid, "receiverAccepted": accepted is not None,
+            "acceptedByWrongProject": accepted_elsewhere, "matchesIntendedOutcome": valid,
+        })
+    actual_ids = {event["eventId"] for event in detector["events"]
+                  if event["changeKind"] == "ARRIVED" and event["fileId"] in expected_files}
+    ready = ready and actual_ids == set(EXPECTED_ARRIVAL_EVENT_IDS.values())
+    latest = app.latest if isinstance(app.latest, dict) else {}
+    host_view = latest.get("host", {})
+    return {
+        "ready": ready,
+        "arrivalEvents": rows,
+        "receiverCounts": {project_id: {
+            "requestCount": value["requestCount"],
+            "uniqueProcessedCount": value["uniqueProcessedCount"],
+            "acceptedArrivalIds": sorted(set(EXPECTED_ARRIVAL_EVENT_IDS.values())
+                & set(value["acceptedEvents"])),
+        } for project_id, value in receivers.items()},
+        "tkSnapshot": {
+            "acked": latest.get("acked"), "pending": latest.get("pending"),
+            "cycle": host_view.get("cycle"), "heartbeatAt": host_view.get("heartbeatAt"),
+            "globalPaused": host_view.get("globalPaused"),
+            "pausedProjectIds": host_view.get("pausedProjectIds"),
+        },
+        "observedAtMonotonic": round(time.monotonic(), 3),
+    }
 
 
 def _edit_display_name(app, project_id, name):
@@ -278,8 +517,10 @@ def main():
                                       "confirmedUnusedCRemoval": True, "runningWorkerRemovalRefused": True,
                                       "historyBearingRemovalRefused": True, "stateFilesDeleted": False}
 
-        _toggle(app, "project-a", True)  # real Start Project callback
-        _toggle(app, "project-b", True)
+        enablement_trace = []
+        enablement_trace.append(_toggle(app, "project-a", True, legacy_before))
+        enablement_trace.append(_toggle(app, "project-b", True, legacy_before))
+        output["projectEnablement"] = enablement_trace
         registry_after_enable = ProjectRegistry(registry_path).load()
         assert registry_after_enable["projects"] == legacy_before
         assert all(item["enabled"] for item in registry_after_enable["folderProjects"])
@@ -325,46 +566,331 @@ def main():
         _wait(app, lambda: any(event["changeKind"] == "CONTENT_UPDATED"
                                for event in app.latest["history"]), timeout=15)
         _wait(app, lambda: apo_a.processed_count >= 1, timeout=8)
+        detector_after_update = _validate_detector_state(
+            _read_detector_state(load_config(config_path).detector_path))
+        content_update = next(event for event in detector_after_update["events"]
+                              if event["fileId"] == "existing-prompts-a"
+                              and event["changeKind"] == "CONTENT_UPDATED")
+        content_entry = _read_ledger(load_config(config_path).ledger_path)["entries"][content_update["eventId"]]
+        content_proof = {"projectId": "project-a", "eventId": content_update["eventId"]}
+        content_signature = hmac.new(KEYS["test:project-a"], _canonical_json(content_proof),
+                                     hashlib.sha256).hexdigest()
+        assert content_entry["status"] == "ACKED"
+        assert hmac.compare_digest(content_entry["receipt"]["signature"], content_signature)
+        output["contentUpdate"] = {"eventId": content_update["eventId"], "status": "ACKED",
+                                   "authenticatedReceipt": True, "countedAsArrival": False}
         acked_counts = (apo_a.request_count, apo_b.request_count)
         cycle_after_ack = app.latest["host"].get("cycle", 0)
         _wait(app, lambda: app.latest["host"].get("cycle", 0) >= cycle_after_ack + 2, timeout=8)
         assert (apo_a.request_count, apo_b.request_count) == acked_counts
         arrivals = snapshots(arrivals=True, changed=True)
+        # Complete the four-project/folder acceptance matrix in this same real-Tk
+        # dashboard + detached-worker run: the baseline helper supplies A prompts
+        # and B reports; add A reports and B prompts as direct-child arrivals.
+        for file_id, folder_id in (("new-report-a", "reports-a"),
+                                   ("new-prompt-b", "prompts-b")):
+            arrivals["folders"][folder_id]["items"].append({
+                "id": file_id, "name": file_id + ".txt", "mimeType": "text/plain",
+                "parents": [folder_id], "trashed": False, "version": "3", "size": "24",
+                "modifiedTime": "2026-10-21T00:00:05Z", "md5Checksum": "c" * 32,
+                "webViewLink": f"https://drive.google.com/file/d/{file_id}/view"})
         _write(worker_fixture, arrivals)
-        _wait(app, lambda: any(event["changeKind"] == "ARRIVED" and event["projectId"] == "project-b"
-                               for event in app.latest["history"]), timeout=15)
-        _wait(app, lambda: any(event["projectId"] == "project-b" and event["status"] == "PENDING"
-            for event in _read_ledger(load_config(config_path).ledger_path)["entries"].values()), timeout=8)
-        pending_event = next(event for event in _read_ledger(load_config(config_path).ledger_path)["entries"].values()
-                             if event["projectId"] == "project-b" and event["status"] == "PENDING")
-        assert pending_event["status"] == "PENDING"
-        pending_id = pending_event["eventId"]
-        b_requests_before_disable = apo_b.request_count
+        checkpoint_holder = {}
+        def intended_arrival_checkpoint():
+            checkpoint_holder["snapshot"] = _arrival_checkpoint(app, apo_a, apo_b)
+            return checkpoint_holder["snapshot"]["ready"]
+        try:
+            _wait(app, intended_arrival_checkpoint, timeout=15)
+        except Exception:
+            raise AssertionError("named arrival ACK checkpoint not reached: " +
+                json.dumps(checkpoint_holder.get("snapshot", {}), sort_keys=True,
+                           separators=(",", ":"))) from None
+        initial_checkpoint = checkpoint_holder["snapshot"]
+        initial_pending = next(event for event in initial_checkpoint["arrivalEvents"]
+                              if event["eventId"] == EXPECTED_ARRIVAL_EVENT_IDS[PENDING_ARRIVAL])
+        if (initial_pending["ledgerStatus"] != "PENDING" or initial_pending["attemptCount"] != 1
+                or initial_pending["receiptPresent"] or initial_pending["authenticatedAck"]
+                or not initial_pending["receiverAccepted"]):
+            raise AssertionError("initial B prompt pending/no-receipt checkpoint was not proven: " +
+                json.dumps(initial_pending, sort_keys=True, separators=(",", ":")))
 
-        _toggle(app, "project-b", False)
-        doc = ProjectRegistry(registry_path).load()
-        assert next(item for item in doc["folderProjects"] if item["projectId"] == "project-b")["enabled"] is False
-        assert doc["projects"] == legacy_before
-        preserved = _read_ledger(load_config(config_path).ledger_path)["entries"][pending_id]
-        assert preserved["status"] == "PENDING" and preserved["eventId"] == pending_id
-        cycle_before_a_change = app.latest["host"].get("cycle", 0)
+        # Freeze B at a safe worker boundary while the first accepted request
+        # remains durably pending. This prevents a legitimate timed retry from
+        # changing the intended first-drop checkpoint during its verification.
+        _select(app, "project-b")
+        _wait(app, lambda: app._selected_project() == "project-b"
+              and app.future is None and str(app.pause_project_button.cget("state")) == "normal"
+              and not app.pause_project_button.instate(["disabled"]))
+        before_pause_host = host_status(config_path)
+        if before_pause_host.get("status") not in {"RUNNING", "DEGRADED"}:
+            raise AssertionError("Pause Project requires an active worker")
+        pause_responses = []
+        original_status_command = arm_v2_dashboard._status_command
+        def capture_pause_response(config, command, timeout=20.0, project_id=None):
+            response = original_status_command(config, command, timeout, project_id)
+            if command == "pause" and project_id == "project-b":
+                pause_responses.append(response)
+            return response
+        arm_v2_dashboard._status_command = capture_pause_response
+        try:
+            pause_invoke_result = app.pause_project_button.invoke()
+            pause_invoke_metadata = {"returnType": type(pause_invoke_result).__name__,
+                                     "returnRepr": repr(pause_invoke_result)}
+            if (app._selected_project() != "project-b" or app.future is None
+                    or getattr(app, "_pending_command", None) != "pause"
+                    or getattr(app, "_pending_project_id", None) != "project-b"):
+                raise AssertionError("Pause Project widget did not queue the selected project control")
+            queued_command = app._pending_command
+            queued_project_id = app._pending_project_id
+
+            def matching_pause_applied():
+                if len(pause_responses) != 1:
+                    return False
+                code, payload = pause_responses[0]
+                request_id = payload.get("requestId")
+                if (code != 0 or not isinstance(request_id, str)
+                        or payload.get("result") not in {"APPLIED", "PENDING"}):
+                    return False
+                current = host_status(config_path)
+                applied = current.get("lastAppliedControl")
+                latest_host = (app.latest or {}).get("host", {})
+                latest_applied = latest_host.get("lastAppliedControl")
+                return (app.future is None
+                        and current.get("pauseControlStatus") == "IDLE"
+                        and "project-b" in current.get("pausedProjectIds", [])
+                        and isinstance(applied, dict)
+                        and applied.get("requestId") == request_id
+                        and applied.get("command") == "PAUSE_PROJECT"
+                        and applied.get("projectId") == "project-b"
+                        and "project-b" in latest_host.get("pausedProjectIds", [])
+                        and isinstance(latest_applied, dict)
+                        and latest_applied.get("requestId") == request_id
+                        and latest_applied.get("command") == "PAUSE_PROJECT"
+                        and latest_applied.get("projectId") == "project-b")
+
+            _wait(app, matching_pause_applied, timeout=15)
+        finally:
+            arm_v2_dashboard._status_command = original_status_command
+        pause_code, pause_payload = pause_responses[0]
+        pause_request_id = pause_payload["requestId"]
+        output["pauseControlCheckpoint"] = {
+            "selectedProjectId": "project-b", "buttonActionable": True,
+            "widgetInvokeReturn": pause_invoke_metadata,
+            "asynchronousCommand": queued_command, "asynchronousProjectId": queued_project_id,
+            "requestId": pause_request_id, "responseResult": pause_payload.get("result"),
+            "responseCode": pause_code, "workerAppliedRequestId":
+                host_status(config_path)["lastAppliedControl"]["requestId"],
+            "projectBPausedAtSafeBoundary": True,
+        }
+        pause_boundary_host = host_status(config_path)
+        applied_pause = pause_boundary_host.get("lastAppliedControl")
+        paused_checkpoint = _arrival_checkpoint(app, apo_a, apo_b,
+                                                allow_pending_ack_after_drop=True)
+        if (not paused_checkpoint["ready"] or not isinstance(applied_pause, dict)
+                or applied_pause.get("requestId") != pause_request_id
+                or applied_pause.get("command") != "PAUSE_PROJECT"
+                or applied_pause.get("projectId") != "project-b"
+                or "project-b" not in pause_boundary_host.get("pausedProjectIds", [])):
+            raise AssertionError("post-pause event/control state was not qualified: " +
+                json.dumps({"checkpoint": paused_checkpoint, "pause": applied_pause,
+                            "workerCycle": pause_boundary_host.get("cycle")},
+                           sort_keys=True, separators=(",", ":")))
+
+        pending_id = EXPECTED_ARRIVAL_EVENT_IDS[PENDING_ARRIVAL]
+        paused_b_prompt = next(event for event in paused_checkpoint["arrivalEvents"]
+                               if event["eventId"] == pending_id)
+        if paused_b_prompt["ledgerStatus"] == "ACKED":
+            ack_time = datetime.fromisoformat(paused_b_prompt["receiptReceivedAt"].replace("Z", "+00:00"))
+            pause_applied_time = datetime.fromisoformat(applied_pause["appliedAt"].replace("Z", "+00:00"))
+            if (paused_b_prompt["attemptCount"] < 2 or not paused_b_prompt["authenticatedAck"]
+                    or ack_time > pause_applied_time):
+                raise AssertionError("B retry ACK was not authenticated before pause application: " +
+                    json.dumps({"event": paused_b_prompt, "pause": applied_pause},
+                               sort_keys=True, separators=(",", ":")))
+        elif (paused_b_prompt["ledgerStatus"] != "PENDING"
+              or paused_b_prompt["attemptCount"] != 1 or paused_b_prompt["receiptPresent"]
+              or paused_b_prompt["authenticatedAck"]):
+            raise AssertionError("B prompt state changed without an authenticated retry ACK")
+
+        def notification_state(entry):
+            receipt = entry.get("receipt")
+            return {"eventId": entry.get("eventId"), "projectId": entry.get("projectId"),
+                    "status": entry.get("status"), "attemptCount": entry.get("attemptCount"),
+                    "nextAttemptAt": entry.get("nextAttemptAt"),
+                    "lastErrorClass": entry.get("lastErrorClass"),
+                    "updatedAt": entry.get("updatedAt"),
+                    "receiptPresent": receipt is not None,
+                    "receiptReceivedAt": receipt.get("receivedAt") if receipt else None,
+                    "receiptSignature": receipt.get("signature") if receipt else None}
+
+        config_at_pause = load_config(config_path)
+        ledger_at_pause = _read_ledger(config_at_pause.ledger_path)
+        b_entry_at_pause = ledger_at_pause["entries"][pending_id]
+        b_notification_at_pause = notification_state(b_entry_at_pause)
+        b_requests_at_pause = paused_checkpoint["receiverCounts"]["project-b"]["requestCount"]
+        b_unique_at_pause = paused_checkpoint["receiverCounts"]["project-b"]["uniqueProcessedCount"]
+        a_requests_at_pause = paused_checkpoint["receiverCounts"]["project-a"]["requestCount"]
+        a_unique_at_pause = paused_checkpoint["receiverCounts"]["project-a"]["uniqueProcessedCount"]
+        pause_boundary_cycle = pause_boundary_host["cycle"]
+        boundary_cycle_projects = {
+            row.get("projectId"): {"status": row.get("status"),
+                                   "providerCalls": row.get("providerCalls")}
+            for row in (pause_boundary_host.get("recentCycle") or {}).get("projects", [])}
+        output["arrivalMatrix"] = {
+            "expectedEventIds": [
+                {"projectId": key[0], "eventType": key[1], "fileId": key[2], "eventId": event_id}
+                for key, event_id in EXPECTED_ARRIVAL_EVENT_IDS.items()],
+            "initialPendingCheckpoint": {"event": initial_pending,
+                "observedAtMonotonic": initial_checkpoint["observedAtMonotonic"]},
+            "checkpoint": "project-b paused at safe worker boundary",
+            "arrivalEvents": paused_checkpoint["arrivalEvents"],
+            "receiverCounts": paused_checkpoint["receiverCounts"],
+            "bPromptTransition": {"eventId": pending_id,
+                "statusAtAppliedBoundary": paused_b_prompt["ledgerStatus"],
+                "attemptCountAtAppliedBoundary": paused_b_prompt["attemptCount"],
+                "receiptPresentAtAppliedBoundary": paused_b_prompt["receiptPresent"],
+                "authenticatedAckAtAppliedBoundary": paused_b_prompt["authenticatedAck"],
+                "receiptReceivedAt": paused_b_prompt["receiptReceivedAt"],
+                "pauseRequestedAt": applied_pause["requestedAt"],
+                "pauseAppliedAt": applied_pause["appliedAt"],
+                "pauseAppliedCycle": pause_boundary_cycle,
+                "providerCallsInCycleApplyingPause": boundary_cycle_projects,
+                "retryAckPrecededPauseApplication":
+                    paused_b_prompt["ledgerStatus"] == "ACKED"},
+            "authenticatedAckEventIds": [event["eventId"] for event in paused_checkpoint["arrivalEvents"]
+                                         if event["authenticatedAck"]],
+            "projectBPaused": True,
+            "projectIsolationVerified": all(event["receiverAccepted"]
+                and not event["acceptedByWrongProject"] for event in paused_checkpoint["arrivalEvents"]),
+            "tkSnapshotAtCheckpoint": paused_checkpoint["tkSnapshot"],
+        }
+
+        # Keep Project B paused while Project A observes and delivers a distinct
+        # content update. Every post-boundary cycle must show B was not polled.
         updated_a = snapshots(changed=True)
         item_a = updated_a["folders"]["prompts-a"]["items"][0]
         item_a["md5Checksum"] = "d" * 32
         item_a["version"] = "3"
         _write(worker_fixture, updated_a)
-        _wait(app, lambda: app.latest["host"].get("cycle", 0) >= cycle_before_a_change + 1
-              and any(event["projectId"] == "project-a" and event["changeKind"] == "CONTENT_UPDATED"
-                      for event in app.latest["history"])
-              and apo_a.processed_count >= 2, timeout=15)
-        _wait(app, lambda: app.latest["host"].get("cycle", 0) >= cycle_before_a_change + 3, timeout=8)
+        prior_a_update_id = content_update["eventId"]
+        paused_cycles = []
+        next_cycle = pause_boundary_cycle + 1
+        a_update_ack = None
+        deadline = time.monotonic() + 15
+        while len(paused_cycles) < 3 or a_update_ack is None:
+            app.root.update()
+            current_host = host_status(config_path)
+            current_cycle = current_host.get("cycle", 0)
+            if current_cycle >= next_cycle:
+                recent = current_host.get("recentCycle") or {}
+                recent_cycle = recent.get("cycle")
+                if recent_cycle != next_cycle:
+                    raise AssertionError("missed a post-pause worker cycle while measuring project isolation: " +
+                        json.dumps({"expectedCycle": next_cycle, "observedCycle": recent_cycle,
+                                    "hostCycle": current_cycle}, sort_keys=True,
+                                   separators=(",", ":")))
+                projects = {row.get("projectId"): row for row in recent.get("projects", [])}
+                project_a_cycle = projects.get("project-a", {})
+                project_b_cycle = projects.get("project-b", {})
+                b_entry_now = _read_ledger(load_config(config_path).ledger_path)["entries"][pending_id]
+                if ("project-b" not in current_host.get("pausedProjectIds", [])
+                        or current_host.get("lastAppliedControl", {}).get("requestId") != pause_request_id
+                        or project_b_cycle.get("status") != "PAUSED_NOT_POLLED"
+                        or project_b_cycle.get("providerCalls") != 0
+                        or project_a_cycle.get("status") != "OBSERVED"
+                        or project_a_cycle.get("providerCalls", 0) <= 0
+                        or apo_b.request_count != b_requests_at_pause
+                        or apo_b.processed_count != b_unique_at_pause
+                        or notification_state(b_entry_now) != b_notification_at_pause):
+                    raise AssertionError("paused project isolation changed after applied boundary: " +
+                        json.dumps({"cycle": recent_cycle, "projectA": project_a_cycle,
+                                    "projectB": project_b_cycle,
+                                    "projectBRequests": apo_b.request_count,
+                                    "projectBUnique": apo_b.processed_count,
+                                    "bNotification": notification_state(b_entry_now)},
+                                   sort_keys=True, separators=(",", ":")))
+                paused_cycles.append({"cycle": recent_cycle,
+                    "projectAProviderCalls": project_a_cycle["providerCalls"],
+                    "projectBProviderCalls": project_b_cycle["providerCalls"],
+                    "projectBStatus": project_b_cycle["status"],
+                    "projectBRequests": apo_b.request_count})
+                next_cycle += 1
+
+            detector_now = _validate_detector_state(_read_detector_state(
+                load_config(config_path).detector_path))
+            ledger_now = _read_ledger(load_config(config_path).ledger_path)
+            for event in detector_now["events"]:
+                if (event.get("projectId") != "project-a"
+                        or event.get("fileId") != "existing-prompts-a"
+                        or event.get("changeKind") != "CONTENT_UPDATED"
+                        or event.get("eventId") == prior_a_update_id):
+                    continue
+                entry = ledger_now["entries"].get(event["eventId"])
+                if not entry or entry.get("status") != "ACKED" or not entry.get("receipt"):
+                    continue
+                proof = {"projectId": "project-a", "eventId": event["eventId"]}
+                signature = hmac.new(KEYS["test:project-a"], _canonical_json(proof),
+                                     hashlib.sha256).hexdigest()
+                if (entry["receipt"].get("projectId") == "project-a"
+                        and entry["receipt"].get("eventId") == event["eventId"]
+                        and hmac.compare_digest(entry["receipt"].get("signature", ""), signature)):
+                    a_update_ack = {"eventId": event["eventId"], "status": entry["status"],
+                                    "receiptReceivedAt": entry["receipt"]["receivedAt"],
+                                    "authenticated": True}
+                    break
+            if len(paused_cycles) >= 3 and a_update_ack is not None:
+                break
+            if time.monotonic() >= deadline:
+                raise AssertionError("Project A did not progress through three verified Project B paused cycles: " +
+                    json.dumps({"boundaryCycle": pause_boundary_cycle,
+                                "observedCycles": paused_cycles, "aUpdateAck": a_update_ack},
+                               sort_keys=True, separators=(",", ":")))
+            time.sleep(0.025)
+
+        if (apo_a.request_count != a_requests_at_pause + 1
+                or apo_a.processed_count != a_unique_at_pause + 1
+                or apo_b.request_count != b_requests_at_pause
+                or apo_b.processed_count != b_unique_at_pause):
+            raise AssertionError("receiver activity did not match the paused-project isolation interval")
+        output["pauseIsolation"] = {
+            "projectBPausedByRequestId": pause_request_id,
+            "appliedBoundaryCycle": pause_boundary_cycle,
+            "providerCallsInCycleApplyingPause": boundary_cycle_projects,
+            "projectBRequestCountAtBoundary": b_requests_at_pause,
+            "projectBUniqueCountAtBoundary": b_unique_at_pause,
+            "projectBRequestCountAfterInterval": apo_b.request_count,
+            "projectBUniqueCountAfterInterval": apo_b.processed_count,
+            "projectBNotificationStateUnchanged": b_notification_at_pause["eventId"] == pending_id,
+            "projectARequestCountAtBoundary": a_requests_at_pause,
+            "projectARequestCountAfterInterval": apo_a.request_count,
+            "projectAAuthenticatedContentUpdate": a_update_ack,
+            "pausedCycles": paused_cycles,
+        }
+        b_requests_before_disable = apo_b.request_count
+
+        output["projectEnablement"].append(_toggle(app, "project-b", False, legacy_before))
+        doc = ProjectRegistry(registry_path).load()
+        assert next(item for item in doc["folderProjects"] if item["projectId"] == "project-b")["enabled"] is False
+        assert doc["projects"] == legacy_before
+        preserved = _read_ledger(load_config(config_path).ledger_path)["entries"][pending_id]
+        assert notification_state(preserved) == b_notification_at_pause
+        cycle_after_disable = host_status(config_path).get("cycle", 0)
+        _wait(app, lambda: app.future is None
+              and app.latest["host"].get("cycle", 0) >= cycle_after_disable + 3, timeout=8)
+        disabled_recent = host_status(config_path).get("recentCycle", {})
+        disabled_projects = {row.get("projectId"): row for row in disabled_recent.get("projects", [])}
+        assert disabled_projects.get("project-b", {}).get("status") == "DISABLED_NOT_POLLED"
+        assert disabled_projects.get("project-b", {}).get("providerCalls") == 0
+        assert disabled_projects.get("project-a", {}).get("status") == "OBSERVED"
+        assert disabled_projects.get("project-a", {}).get("providerCalls", 0) > 0
         assert apo_b.request_count == b_requests_before_disable
-        assert apo_b.processed_count == 1
+        assert apo_b.processed_count == 2
         output["disableIsolation"] = {"projectBStatus": next(item["status"] for item in app.latest["projects"]
                                     if item["projectId"] == "project-b"),
-                                    "pendingSameEventId": pending_id,
+                                    "notificationSameEventId": preserved["eventId"],
+                                    "notificationStatusPreserved": preserved["status"],
                                     "projectBRequestsAfterDisable": apo_b.request_count - b_requests_before_disable,
-                                    "projectAContinued": apo_a.processed_count >= 2,
+                                    "projectAContinued": True,
                                     "legacyProjectsUnchanged": True}
 
         app.stop_button.invoke()
@@ -390,21 +916,54 @@ def main():
         app.close()
         app = None
 
+        # Capture the trusted final notification before the independent corruption
+        # phase below. The corruption check must never be followed by a trusted
+        # read from the deliberately malformed ledger.
+        final_b_notification = _read_ledger(load_config(config_path).ledger_path)["entries"].get(pending_id)
+        if (not isinstance(final_b_notification, dict)
+                or final_b_notification.get("eventId") != pending_id
+                or final_b_notification.get("projectId") != "project-b"
+                or final_b_notification.get("status") not in {"PENDING", "ACKED"}
+                or notification_state(final_b_notification) != b_notification_at_pause):
+            raise AssertionError("Project B notification identity/state changed before corruption phase")
+
         # Corrupt transport state must be visible and disables controls; it cannot start a worker.
         registry_before_corrupt = registry_path.read_bytes()
-        ledger_path.write_text("{broken", encoding="utf-8")
         app = _new_app(config_path, folder_fixture_path)
+        ledger_path.write_text("{broken", encoding="utf-8")
+        app._queue_refresh()
+        _wait(app, lambda: app.latest is None)
         assert app.latest is None and app.last_error == "LOCAL_STATE_INVALID"
         assert str(app.start_button.cget("state")) == "disabled"
+        assert str(app.edit_button.cget("state")) == "normal"
+        assert str(app.remove_button.cget("state")) == "normal"
+        app.project_table.selection_set("project-b")
+        app.root.update()
+        app.edit_button.invoke()
+        assert not any(child.winfo_class() == "Toplevel"
+                       and child.title() == "Edit project display name"
+                       for child in app.root.winfo_children())
+        original_confirmation = arm_v2_dashboard.messagebox.askyesno
+        arm_v2_dashboard.messagebox.askyesno = lambda *args, **kwargs: True
+        try:
+            app.remove_button.invoke()
+        finally:
+            arm_v2_dashboard.messagebox.askyesno = original_confirmation
+        assert registry_path.read_bytes() == registry_before_corrupt
         app.start_button.invoke()
         assert host_status(config_path)["status"] == "STOPPED"
         assert registry_path.read_bytes() == registry_before_corrupt
-        output["corruptState"] = "visible fail-closed UI; no worker started; registry unchanged"
+        output["corruptState"] = {"visibleFailClosed": True, "workerNotStarted": True,
+            "registryUnchanged": True, "editRemoveControlsRemainVisuallyEnabled": True,
+            "editRemoveCallbacksRefuseMutation": True}
         app.close()
         app = None
         output["outcome"] = "PASS_VISIBLE_WINDOWS_DASHBOARD_OFFLINE"
         output["projects"] = ["project-a", "project-b"]
-        output["pendingRetryPreservedEventId"] = pending_id
+        output["projectBNotificationEvent"] = {"eventId": pending_id,
+            "finalStatus": final_b_notification["status"],
+            "attemptCount": final_b_notification["attemptCount"],
+            "receiptPresent": final_b_notification["receipt"] is not None}
         output["legacyProjectCount"] = len(legacy_before)
         output["receivers"] = {"projectAUnique": apo_a.processed_count,
                                 "projectBUnique": apo_b.processed_count,
