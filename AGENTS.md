@@ -57,3 +57,37 @@ Two consecutive support-focused milestones—including blocker work, diagnostics
 Review and persist a five-milestone CORE progress checkpoint at least every five milestones; if overdue, STOP before further support work pending Human choice. Synthetic tests, qualification tooling, and documentation alone are not independently verified original-product capability advancement.
 
 These alignment checks do not override or weaken existing safety, protected-area, authorization, validation, or evidence requirements. When evidence is incomplete or conflicting, preserve the uncertainty and stop at the applicable safety gate.
+
+## AMO v5.0 / ARM permanent Objective Lock
+
+### Permanent Human-approved Objective Lock
+
+- `PROJECT_ID`: ARM
+- `OBJECTIVE_ID`: ARM-OBJ-001
+- `OBJECTIVE_VERSION`: 1.0
+- Canonical Human-approved source: https://docs.google.com/document/d/1FVpU_vLLF43uFrU2O_KK1U6vO9_jwsR_aS-uDb9ry_4/edit
+- Original Human Owner objective (verbatim): “Build a SMALL, independent, dependable Windows 10/11 Google Drive change doorbell/relay that observes only the designated direct-child Architect_Prompts and Executor_Reports folders under each configured project root, detects eligible new-file arrivals and content changes, and sends authenticated METADATA-ONLY notifications to ONE configured Orchestrator endpoint per project. Preserve project isolation, deterministic event identities, durable pending notifications with bounded retries/restart recovery and verified receipt ACK; support manual startup and minimal truthful status. Orchestrator—not ARM—interprets prompts, decides workflows and controls downstream actions.”
+- The Human selected the v2 metadata-only doorbell objective as controlling active ARM development. The published main branch's v1.0-RC1 raw outbound publishing requirement remains a historical fact until a separately Human-authorized charter/main integration. This lock does not modify main, erase the v1 history, or establish Release 1 compliance.
+
+### Scope and independent alignment challenge
+
+ARM's minimal CORE purpose is to observe only those two designated direct-child folders under each configured project root and deliver that project's authenticated metadata-only event to its single configured Orchestrator, persisting pending state until a verified receipt ACK. ARM must not interpret task meaning, select milestones, launch or control an Executor or Desktop Bridge, implement Orchestrator workflow decisions, create another downstream destination, or add databases, services, frameworks, or other infrastructure without evidence they are indispensable to the locked objective.
+
+Codex and every Executor must independently challenge each proposed task against this Lock, the exact repository, accepted evidence, and applicable permissions. Reject unrelated, mismatched, unnecessary, or unauthorized scope and report HOLD. The Lock grants no Git publication, live-provider, credential, deployment, system-configuration, or other operational permission. Human approval is required to change this objective.
+
+### Mandatory Executor report starting header
+
+Every Executor report must begin with this populated header. The Architect independently retrieves and verifies the canonical Lock before every report review and next instruction, even when the header is present.
+
+MANDATORY ARCHITECT BOOTSTRAP — READ FIRST
+Architect: Independently retrieve and read this project's Human-approved Objective Lock before reviewing the report or generating another instruction.
+OBJECTIVE_LOCK_URL: https://docs.google.com/document/d/1FVpU_vLLF43uFrU2O_KK1U6vO9_jwsR_aS-uDb9ry_4/edit
+OBJECTIVE_ID: ARM-OBJ-001 v1.0
+If verification fails, HOLD. Do not expand scope or automatically issue another milestone.
+END MANDATORY BOOTSTRAP
+
+### AMO v5.0 stopping rule
+
+After one support-only or blocker milestone without demonstrated CORE progress, do not automatically propose a second consecutive support-only milestone. Continue only when that work is inside a previously Human-approved finite batch with documented limits, expected outcome, fallback, and terminal stop. Preserve every stricter existing stop and all historical records: support STOP remains `TRIGGERED`, exact streak/count remains `UNCERTAIN`, and the five-milestone CORE checkpoint remains `OVERDUE`. Do not reset, reconcile by assumption, or claim these findings cleared. D03 limits remain in force. Human alone may revise the Objective Lock.
+
+These AMO v5 controls add to this file; they do not remove or weaken its existing v4.8 preflight, D03 repair/iteration limits, D18 manual-start boundary, D20/D21 live-provider approval gates, D26 publication restrictions, D27 90-day ACK metadata retention and unresolved-pending preservation, authentication/state safety, protected-area rules, or historical STOP/checkpoint instructions. D27 remains frozen and unqualified unless a separately authorized scope explicitly permits qualification.
