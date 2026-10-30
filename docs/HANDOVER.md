@@ -1,6 +1,6 @@
 # Handover
 
-## ARM v2.0 M00 charter candidate — current status (2026-10-20)
+## ARM v2.0 M00 charter candidate â€” current status (2026-10-20)
 
 The Human approved all 28 v2.0 design decisions and explicitly authorized ONE M00 documentation-only support-STOP exception for a dedicated development branch. The v2 charter candidate is docs/PROJECT_BRIEF.md, with the full short-form decisions in docs/DECISIONS.md and approved detailed plan in the Google Doc: https://docs.google.com/document/d/1FVpU_vLLF43uFrU2O_KK1U6vO9_jwsR_aS-uDb9ry_4/edit.
 
@@ -163,7 +163,7 @@ This section records the human-approved ARM Charter v1.0-RC1 and its local docum
 
 ### Baseline and capability status
 
-Preparation was performed against `main` at `e5d7c288e87f500d9941b9728c7b88876d178a26`, also the locally recorded `origin/main` ref at inspection. The worktree was clean. The accepted bounded Google Drive → Relay → local mock Watcher qualification is present in main. CORE-01 through CORE-04 have accepted bounded implementations; CORE-05 is partial and unattended natural-sign-in/Scheduler/Service lifecycle is unqualified; CORE-06 desktop UI and CORE-07 outbound raw publishing are not implemented; CORE-08 has partial security/isolation controls but incomplete unattended lifecycle qualification. See `docs/PROJECT_BRIEF.md` for the Release 1 definition of done.
+Preparation was performed against `main` at `e5d7c288e87f500d9941b9728c7b88876d178a26`, also the locally recorded `origin/main` ref at inspection. The worktree was clean. The accepted bounded Google Drive â†’ Relay â†’ local mock Watcher qualification is present in main. CORE-01 through CORE-04 have accepted bounded implementations; CORE-05 is partial and unattended natural-sign-in/Scheduler/Service lifecycle is unqualified; CORE-06 desktop UI and CORE-07 outbound raw publishing are not implemented; CORE-08 has partial security/isolation controls but incomplete unattended lifecycle qualification. See `docs/PROJECT_BRIEF.md` for the Release 1 definition of done.
 
 The local `windows-userhost-1a` tip `7d4e806c8647f8c75d9f25b1404e220c28898049` is an ancestor of main, despite stale README language calling that work unmerged. The `windows-service-1a` tip `0b0b070ef3fdbc0bcda205a4f9c962618d3e4a20` is not an ancestor of main (merge base `2b0e316ac347a769ce61b26fc6344528efeab168`); do not describe Windows Service as deployed. The stale README statement is identified for a later bounded documentation correction; README is outside this four-file proposal.
 
@@ -171,9 +171,9 @@ The local `windows-userhost-1a` tip `7d4e806c8647f8c75d9f25b1404e220c28898049` i
 
 The F47 report records `BLOCKED_PREFLIGHT` on 2026-10-13 and states that task registration and fresh authorization consumption did not occur. Inspection of retained ignored evidence found the F37 consumed marker at `evidence/AUTOSTART1B-20261011-LOGON-5F914FBB/registration-attempt-consumed.json`, SHA-256 `79df105818316e813b7ba5d71547705ff70562ba3458a1f7a1b5980fb38df7d1`, matching the recorded F39 reference. The F39 marker remains present with SHA-256 `4b39e3088519203941da310cfd37b5a1517884bb7e4adaa7a97ee9cf53c8a82e`. Some later F45/F46/F47 narrative described the F37 marker as absent; this conflicts with the inspected retained artifact. Neither marker was changed, reconstructed, reset, or consumed during this preparation. F48 read-only reconciliation remains pending.
 
-The Charter instruction says the two-consecutive-`BLOCKER` stop threshold has already triggered. Retained records include a F39 `BLOCKED_DEFINITION` result (23/25 definition checks) and F47 `BLOCKED_PREFLIGHT`. F40–F46 include offline, synthetic, and partial qualification work; current retained evidence does not establish that F39 and F47 were consecutive qualifying `BLOCKER` outcomes under one consistent ledger. Therefore the exact contiguous streak is **unresolved**. Preserve the conservative stop condition; do not reset the streak, declare it cleared, or invent a definitive count. F47 did not register or remove a Scheduler task in its attempt. No Scheduler action was performed for this documentation preparation.
+The Charter instruction says the two-consecutive-`BLOCKER` stop threshold has already triggered. Retained records include a F39 `BLOCKED_DEFINITION` result (23/25 definition checks) and F47 `BLOCKED_PREFLIGHT`. F40â€“F46 include offline, synthetic, and partial qualification work; current retained evidence does not establish that F39 and F47 were consecutive qualifying `BLOCKER` outcomes under one consistent ledger. Therefore the exact contiguous streak is **unresolved**. Preserve the conservative stop condition; do not reset the streak, declare it cleared, or invent a definitive count. F47 did not register or remove a Scheduler task in its attempt. No Scheduler action was performed for this documentation preparation.
 
-The recent F43–F47 work is qualification and planning, not accepted CORE capability progress. At least five milestones have elapsed without evidence of a newly accepted CORE capability; conduct the Charter’s five-milestone review before authorizing further supporting work.
+The recent F43â€“F47 work is qualification and planning, not accepted CORE capability progress. At least five milestones have elapsed without evidence of a newly accepted CORE capability; conduct the Charterâ€™s five-milestone review before authorizing further supporting work.
 
 ### Next-session guardrails
 
@@ -188,7 +188,7 @@ The recent F43–F47 work is qualification and planning, not accepted CORE capab
 
 - **Most recent stage/result:** `ARM.CHARTER.1.0-RC1.DOCUMENTATION.ADOPTION`; the four documentation files were applied locally. No source change or product capability advancement.
 - **Independently verified CORE advancement since the prior checkpoint:** none established by this documentation-preparation stage.
-- **Continuous support-milestone streak:** threshold `TRIGGERED`; exact count/consecutiveness `UNCERTAIN`. Evidence source: the human-approved charter instruction says the two-or-more threshold is triggered; retained F39 `BLOCKED_DEFINITION` and F47 `BLOCKED_PREFLIGHT` records are separated by F40–F46 offline/synthetic/partial work without a consistent chronological ledger. Do not infer an exact streak or reset it.
+- **Continuous support-milestone streak:** threshold `TRIGGERED`; exact count/consecutiveness `UNCERTAIN`. Evidence source: the human-approved charter instruction says the two-or-more threshold is triggered; retained F39 `BLOCKED_DEFINITION` and F47 `BLOCKED_PREFLIGHT` records are separated by F40â€“F46 offline/synthetic/partial work without a consistent chronological ledger. Do not infer an exact streak or reset it.
 - **Five-milestone review:** `OVERDUE / DUE BEFORE ANY FURTHER SUPPORT WORK`. Last/next canonical milestone IDs are not reliably available in the retained ledger; do not fabricate them. Resolve against a source-backed milestone chronology at the checkpoint.
 - **Outstanding Human-approved exception:** the one-time bootstrap exception authorized preparation and local application of this reviewed four-file patch only; it is exhausted. It does not authorize commit, push, or further support work. No additional exception is recorded.
 - **AUTOSTART state:** F47 remains `BLOCKED_PREFLIGHT`; no task registration or fresh authorization consumption occurred. F48 remains pending read-only authorization-history reconciliation. F37/F39 consumed markers remain unchanged; no marker was reconstructed or reset.
@@ -208,7 +208,7 @@ The `arm-v2-m04-apo-ack-offline-1a` branch adds `arm_notification.py` and a dete
 
 The required offline two-project demonstration covers project A `PROMPT_CHANGED`, project B `REPORT_CHANGED`, authenticated receipt, an accept-then-timeout ambiguity, fresh-process retry of the same event identity, and duplicate suppression. It does not exercise real APO, public endpoints, Google Drive, OAuth/DPAPI, CDB, or workflow decisions. This is an offline implementation candidate pending Architect review, not production integration. M03's list-only live creation-versus-move ambiguity remains unresolved.
 
-## ARM.M03.R2 D11 inbox arrival detection — offline candidate
+## ARM.M03.R2 D11 inbox arrival detection â€” offline candidate
 
 Human-authorized D11 supersedes the earlier strict-origin rule: after a silent initial baseline, newly arriving direct-child files qualify whether uploaded/created in the watched folder or moved in. The detector holds a candidate until two successive complete listings show the same usable stable metadata fingerprint. A changed/missing/incomplete observation cannot emit; rename-only, metadata-only version change, deletion and nested membership alone remain silent. An observed departure followed by stable re-entry creates a distinct per-file arrival occurrence ID. SchemaVersion 1 detector state is explicitly migrated while preserving old M03 event identities and M04 source compatibility. Stability is a bounded best-effort metadata heuristic, not proof upload completion.
 
@@ -216,7 +216,7 @@ Candidate branch: `arm-v2-m03r2-inbox-arrival-offline-1a`, baseline M04 `5ba294d
 
 The D11 product-policy amendment is recorded in `docs/PROJECT_BRIEF.md` and `docs/DECISIONS.md` with dated Human authority. R1's source finding is retained as historical evidence; origin is no longer a qualification requirement under amended D11. M03 live provider behavior, actual upload completion, native Workspace content updates and real APO interoperability remain unqualified. Historical support STOP remains `TRIGGERED`/`UNCERTAIN`; no M05 or other milestone is authorized.
 
-## ARM.M03.R3 handover — published foreground integration
+## ARM.M03.R3 handover â€” published foreground integration
 
 - Published branch `arm-v2-m03r3-foreground-cycle-1a` is at `3a7605e99bf75093234fbbc074910ea6b958ecec`, based on accepted R2 SHA `9a5990226ffb8d6c05d232bfb4d01e5fdbe3f484`.
 - `arm_foreground.py` composes M01/M03.R2/M04 via injected provider and secret resolver. `run(max_cycles=...)` is bounded, sleeps between cycles, returns sanitized status, and preserves state when interrupted. No provider credentials are opened by this module.
@@ -227,7 +227,7 @@ The D11 product-policy amendment is recorded in `docs/PROJECT_BRIEF.md` and `doc
 - Raw sanitized report/evidence is ignored under `.agent-work/milestones/ARM.M03.R3.FOREGROUND_CYCLE.1A/evidence/`.
 - Human D26 publication authorization was subsequently added to the updated M03.R3 instruction. One ordinary non-force push published the single R3 commit; no merge or tag occurred. The R3 implementation remains offline-only and is not wired to live OAuth/Drive or production secret storage.
 
-## ARM.M05 Windows manual background host — offline candidate
+## ARM.M05 Windows manual background host â€” offline candidate
 
 - **CORE advance:** add manual UI-independent process lifetime for the already accepted ARM v2 cycle. This remains within the ARM doorbell boundary and grants no Orchestrator workflow authority.
 - **Baseline/branch:** published R3 `3a7605e99bf75093234fbbc074910ea6b958ecec`; isolated worktree branch `arm-v2-m05-userhost-lifecycle-offline-1a`.
@@ -237,14 +237,14 @@ The D11 product-policy amendment is recorded in `docs/PROJECT_BRIEF.md` and `doc
 - Historical governance remains unchanged: support STOP is `TRIGGERED` with exact count `UNCERTAIN`; the prior five-milestone support checkpoint is `OVERDUE`. M05 is the explicitly selected CORE product capability, not a claim that either governance record was reset. Human D26 authorization now permits one commit and ordinary push to the named M05 branch after refreshed validation; no merge, tag, or next milestone is authorized.
 - Operator and qualification details: `docs/ARM_V2_USERHOST.md`, `docs/VALIDATION.md`, append-only `docs/TEST_EVIDENCE_LEDGER.md`, and ignored `.agent-work/milestones/ARM.M05.WINDOWS.USERHOST.LIFECYCLE.1A/evidence/`.
 
-## ARM.M02.1A Windows dashboard — offline candidate (2026-10-22)
+## ARM.M02.1A Windows dashboard â€” offline candidate (2026-10-22)
 
 
 The earlier statement that no M02 work was authorized records the M00/M01 handover boundary and is superseded for this bounded Human-authorized CORE M02.1A candidate. The worktree is based on M05.R1 `7f51720f9b81ba99a3fc494d050249d8d680d4a0` on `arm-v2-m02a-windows-dashboard-offline-1a`. `arm_v2_dashboard.py` reuses the v2 registry and M05 fixture host, validates folder identities with a local FakeDriveProvider, presents metadata-only status/history, and controls only the accepted M05 CLI. It adds no Orchestrator authority, live provider path, pause semantics, service, scheduler, or startup behavior.
 
 Offline Windows Tk qualification and precise limitations are recorded in `docs/ARM_V2_DASHBOARD.md`, `docs/VALIDATION.md`, the appended `docs/TEST_EVIDENCE_LEDGER.md` record, and ignored `.agent-work/milestones/ARM.M02.1A.WINDOWS.DASHBOARD/evidence/`. This remains an uncommitted/unpublished local candidate pending independent Architect review; D26 publication permission was not established. Do not start M02.1B or live M06 as part of this candidate.
 
-## ARM.M02.1B Global and Per-Project Pause/Resume — offline candidate
+## ARM.M02.1B Global and Per-Project Pause/Resume â€” offline candidate
 
 The isolated branch `arm-v2-m02b-runtime-pause-resume-offline-1a` starts from M02.1A `f9eef9d655eae98b4f1f2552cc269ac2e51c3bae`. It adds durable pause state, safe-boundary worker acknowledgement, global/per-project suppression of scan and dispatch, state-preserving stop/restart, CLI controls, and dashboard selection persistence across refresh. Pause is distinct from `enabled=false`; detector state and pending ACKs are retained. Corrupt/mismatched pause state fails closed.
 
@@ -260,7 +260,7 @@ Qualification is recorded in `docs/VALIDATION.md`, the appended evidence ledger,
 - Offline Windows qualification: 10 focused and 182 full unittest passes; all seven inherited local demos and the visible Tk project-management demo passed. Exact results/evidence: ignored `.agent-work/milestones/ARM.M02.1C-WINDOWS-PROJECT-MANAGEMENT/evidence/`.
 - The updated instruction now records D26 authorization for one ordinary commit and non-force push of the exact nine-path candidate after fresh requalification. No main merge, tag, release, live Drive, OAuth/DPAPI, real APO, Scheduler/Service, Desktop Bridge, or Orchestrator workflow authority is authorized.
 
-## ARM.M06.S1 � simulated end-to-end acceptance
+## ARM.M06.S1 — simulated end-to-end acceptance
 
 The local candidate on `arm-v2-m06s1-simulated-e2e-offline-1a` qualifies the existing two-project Drive-fixture ? ARM ? simulated Orchestrator chain using the visible Windows dashboard and detached worker. Four project/folder arrival classes, signed request and ACK checks, pending same-ID retry coverage, Pause/Resume, restart/reattach, isolation, invalid-state fail-closed behavior, and shutdown were demonstrated offline. Full discovery passed 182/182; seven offline demos, the changed-demo compile check, and diff check passed. No product runtime source was modified.
 
@@ -269,3 +269,12 @@ Exact acceptance notes, gaps, and Stage 2 prerequisites are in `docs/ARM_M06_STA
 ## M06.S1 final recovery result
 
 RECOVERY3/3 is consumed. The focused visible Tk run and one complete offline qualification batch passed (182/182 tests, seven demos, compilation and direct diff check). The batch's wrapper initially mis-invoked the Git check as `python git diff --check`; the actual Git command was run directly once and passed. The prior RECOVERY2 line-782 heartbeat failure remains unresolved because its temporary file was not retained; current-run reads were valid, and no defect correction or runtime change is claimed. Evidence is in ignored `.agent-work/milestones/ARM.M06.S1-SIMULATED-E2E-OFFLINE/evidence/20261024/recovery3-run01-20261024/`. Preserve all earlier failure captures and the exact six-path candidate. M06.S1 awaits independent Architect review; recovery authorization is exhausted.
+
+
+## ARM.M06.S2A — live provider -> simulated Orchestrator qualification (Executor report, 2026-10-30)
+
+The Human authorized a single runner OAuth-client path correction and one subsequent bounded automated live test with an independent disposable Drive-file writer. The Executor reported **PASS** for the fixed M06.S2A objective: real Google Drive metadata observation after a silent baseline; one direct-child `Architect_Prompts` `ARRIVED/PROMPT_CHANGED` event; authenticated metadata-only loopback notification; matching signed receiver ACK persisted as `ACKED`; restart duplicate suppression; and exact disposable fixture cleanup. One live invocation, four of six permitted observations and 13 Drive metadata requests were reported. OAuth silent refresh passed without interactive sign-in; tracked worktree was reported clean, and no product source was modified.
+
+**Architect evidence boundary:** The two Git-ignored local evidence files `qualification.json` and `cleanup.json` were identified but **not independently inspected**. Disposition is therefore **EXECUTOR_REPORTED_PASS — INDEPENDENT_LOCAL_EVIDENCE_REVIEW_PENDING**, not independent evidence-verified acceptance. Full scope, metrics, evidence paths and limitations: [docs/ARM_M06_STAGE2A.md](ARM_M06_STAGE2A.md). The canonical Drive decision record was updated with the same distinction. Earlier OAuth HOLD and failed invocations remain historical; no rerun was performed for this documentation update.
+
+This qualification concerns a **simulated** Orchestrator only, not D21 production/remote integration, full Release 1 or long-lived unattended OAuth. Historical support STOP remains **TRIGGERED** (count **UNCERTAIN**), five-milestone CORE checkpoint remains **OVERDUE**, M02.1D **PARKED**, D27 **FROZEN**. No successor work or real Orchestrator integration is authorized. Human approval to update this documentation and the named development branch does not authorize main-branch integration, tracked runtime changes or additional tests.
