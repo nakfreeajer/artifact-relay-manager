@@ -135,7 +135,7 @@ The offline demo uses two M01-configured projects and persisted M03 detector eve
 
 This offline slice does not qualify live endpoint deployment, secret distribution/rotation, real APO behavior, transport scheduling, or the unresolved M03 live new-file creation proof. It adds no Orchestrator workflow or acceptance authority.
 
-## ARM.M03.R2 — Human-approved D11 inbox arrival detection (offline candidate)
+## ARM.M03.R2 â Human-approved D11 inbox arrival detection (offline candidate)
 
 Human-approved D11 now treats a file newly arriving as a direct child after the silent first-scan baseline as eligible whether uploaded/created there or moved in. The detector requires two successive complete scans with an unchanged usable metadata fingerprint before persisting an `ARRIVED` event. Existing rename-only, metadata-only version changes and deletion do not notify; nested items are excluded. An observed departure cancels an unqualified candidate; confirmed departure followed by stable re-entry creates a new deterministic occurrence ID. Existing M03 `CREATED`/`CONTENT_UPDATED` event IDs and M04 notification payload/ACK behavior remain compatible through detector state migration. The historical M03.R1 finding remains accurate under the earlier strict-origin rule; the Human-approved D11 policy removes the need to infer historical creation origin.
 
@@ -159,7 +159,7 @@ Baseline: published R3 `3a7605e99bf75093234fbbc074910ea6b958ecec`; work branch `
 
 M05 qualification is Windows-only but fixture-only: it accepts current-user local metadata fixtures, `test:` secret references, and loopback simulated Orchestrator endpoints. It strips OAuth environment inputs and blocks non-loopback socket destinations. No service, scheduled startup, registry/firewall change, elevation, live Drive/OAuth, real APO, or production secret integration is included. Human D26 authorization now permits one commit and ordinary push to the M05 development branch after refreshed validation. See `docs/ARM_V2_USERHOST.md` and M05 qualification in `docs/VALIDATION.md`.
 
-## ARM.M02.1A Windows dashboard — local offline candidate (2026-10-22)
+## ARM.M02.1A Windows dashboard â local offline candidate (2026-10-22)
 
 Source baseline `7f51720f9b81ba99a3fc494d050249d8d680d4a0`; isolated branch `arm-v2-m02a-windows-dashboard-offline-1a`. This incremental CORE M02 slice adds a native Tk/ttk management window for v2 `folderProjects`, local FakeDriveProvider validation, validated atomic v2 enable/disable, metadata-only event/receipt history, M04 pending/ACK counts, and asynchronous Start/Status/Stop delegation to the accepted M05 fixture host. Closing the window leaves the worker alive; a fresh GUI process reattaches through the existing M05 state identity. The dashboard is prominently fixture/offline-only and has no Pause/Resume or removal control. See `docs/ARM_V2_DASHBOARD.md` for behavior and the reviewed pause proposal.
 
@@ -167,7 +167,7 @@ The visible Windows qualification used temporary projects A/B, one unrelated leg
 
 This is a local qualification candidate only. No D26 branch publication authorization was present; no commit/push, merge, tag, or release was performed. Full M02/Release 1, live provider/endpoint interoperability, and reviewed pause/resume remain incomplete. Historical support STOP remains TRIGGERED/count UNCERTAIN and the prior checkpoint remains OVERDUE.
 
-## ARM.M02.1B Global and Per-Project Pause/Resume — offline candidate (2026-10-22)
+## ARM.M02.1B Global and Per-Project Pause/Resume â offline candidate (2026-10-22)
 
 Baseline `f9eef9d655eae98b4f1f2552cc269ac2e51c3bae`; isolated branch `arm-v2-m02b-runtime-pause-resume-offline-1a`. The candidate adds durable worker-acknowledged global/per-project pause controls and dashboard selection-refresh preservation, reusing the accepted M02.1A dashboard and M05 detached fixture host. It preserves notification/detector state, distinguishes pause from registry disablement, and fails closed on corrupt or mismatched pause state. Windows Tk, detached process, and loopback-only simulated APO qualification is recorded in `docs/VALIDATION.md`, `docs/TEST_EVIDENCE_LEDGER.md`, and ignored `.agent-work/milestones/ARM.M02.1B.RUNTIME.PAUSE.RESUME/evidence/`.
 
@@ -180,7 +180,7 @@ Baseline `d1fe9b1a2629d8c63308a556441aec6130ea00b4`; isolated local branch `arm-
 
 Qualification used real interactive Windows Tk widgets, local metadata fixtures, and loopback simulated APOs. Focused tests: 10/10; full discovery: 182/182. The visible M02.1C demo passed display-name edit with unchanged identity fields, confirmed unused-C removal, running-worker and history-bearing removal refusal, legacy-project preservation, worker reattachment, A/B isolation, and existing Pause/Resume behavior. Evidence is under ignored `.agent-work/milestones/ARM.M02.1C-WINDOWS-PROJECT-MANAGEMENT/evidence/`. Offline-only: no live Drive/OAuth/DPAPI/real APO or external endpoints. The updated instruction subsequently records D26 authorization for one ordinary commit and non-force push to this named branch after fresh requalification. No main merge, tag, or release is authorized; independent Architect review remains pending. Historical support STOP remains TRIGGERED/count UNCERTAIN and checkpoint remains OVERDUE.
 
-## ARM.M06.S1 simulated end-to-end acceptance � offline candidate
+## ARM.M06.S1 simulated end-to-end acceptance  offline candidate
 
 The dedicated `arm-v2-m06s1-simulated-e2e-offline-1a` worktree is based on `da2286649d15a376df58200094936fb2d45fd687`. It reuses the accepted fixture provider, two-project registry, M03.R2 detector, M04 notification ledger, M05 detached worker, and Windows Tk dashboard. The bounded demo extension covers both watched folder types for projects A and B; no runtime source changed. Full offline tests passed 182/182, Python compilation and `git diff --check` passed, and all seven inherited demos exited 0. Evidence and known Release 1 closure obligations are recorded in `docs/ARM_M06_STAGE1.md`, `docs/VALIDATION.md`, and ignored `.agent-work/milestones/ARM.M06.S1-SIMULATED-E2E-OFFLINE/evidence/20261022/`.
 
@@ -191,3 +191,12 @@ This is simulated Stage 1 only. No live provider, OAuth/DPAPI session, real Orch
 The final bounded recovery qualification completed offline on branch `arm-v2-m06s1-simulated-e2e-offline-1a` at baseline `da2286649d15a376df58200094936fb2d45fd687`. One focused visible Tk diagnostic passed; all actual line-782 heartbeat reads captured in that run were present, valid 1,059-byte JSON with required keys. The prior RECOVERY2 heartbeat error remains unexplained because its temporary file and byte evidence were not retained. No cause or runtime defect is claimed.
 
 One full batch then passed 182/182 tests, all seven offline demos, compilation and the direct `git diff --check`. M06 remains subject to independent Architect review; this offline result does not qualify live Drive/APO or Release 1. Recovery extension is exhausted at 3/3. Historical support STOP remains TRIGGERED/count UNCERTAIN and the five-milestone checkpoint remains OVERDUE.
+
+
+## ARM.M06.S2A live-provider qualification — 2026-10-30 (Executor-reported PASS)
+
+After recovering ARM's separate Google Cloud Desktop OAuth client and changing only the Git-ignored qualification runner's `CLIENT_FILE` path under explicit Human approval, the Executor reported a successful **real Google Drive -> ARM -> authenticated local simulated Orchestrator -> signed ACK** qualification. One authorized live invocation completed four of six permitted monitor observations and 13 real Drive metadata requests. A silent baseline yielded zero notifications. An independent writer created one disposable plain-text file in the isolated `Architect_Prompts` folder; ARM detected one direct-child `ARRIVED/PROMPT_CHANGED`, delivered metadata only without downloading its body, verified and persisted the signed ACK, and showed no duplicate receiver effect on restart observation. The exact file was reportedly deleted and its metadata lookup returned 404. OAuth silent refresh succeeded; receiver and runner shut down; source and tracked worktree were reported unchanged.
+
+**Disposition:** `EXECUTOR_REPORTED_PASS — INDEPENDENT_LOCAL_EVIDENCE_REVIEW_PENDING`. The Architect independently verified objective, milestone and repository governance but could not inspect the reported Git-ignored `qualification.json` and `cleanup.json` on the Windows host. This is not independent evidence verification. See [ARM_M06_STAGE2A.md](ARM_M06_STAGE2A.md) for the exact evidence paths, scope and limits. The earlier authentication HOLD remains historical and is not evidence for the successful run. This test did **not** qualify the real/remote Orchestrator, full Windows app release, second folder with real provider, or unattended authorization longevity.
+
+Historical support STOP `TRIGGERED` / count `UNCERTAIN`; five-milestone CORE checkpoint `OVERDUE`; M02.1D `PARKED`; D27 retention `FROZEN`. No automatic new milestone, production integration, release, or main-branch merge. This documentation-only Git update reflects the Human's explicit 2026-10-30 request to update the document and Git; it does not expand live/runtime authority.
