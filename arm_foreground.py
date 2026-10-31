@@ -64,6 +64,9 @@ class ForegroundMonitor:
             try:
                 detection = self.detector.scan(self.provider, project_ids=enabled_ids)
             except Exception as exc:
+                fatal_types = getattr(self.provider, "fatal_error_types", ())
+                if isinstance(fatal_types, tuple) and isinstance(exc, fatal_types):
+                    raise
                 # M03 persists all selected listings as one transaction. On any
                 # listing failure it writes none; label the whole enabled batch
                 # degraded and never reinterpret a failed listing as empty.

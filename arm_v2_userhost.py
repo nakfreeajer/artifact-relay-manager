@@ -1,7 +1,7 @@
-"""Manually launched, per-user ARM v2 fixture host.
+"""Manually launched, per-user ARM v2 monitoring host.
 
-This bounded M05 implementation intentionally supports only a local metadata
-fixture and loopback simulated Orchestrators. It never constructs Drive OAuth.
+Legacy configurations remain fixture-only. An explicit drive provider mode
+uses the protected read-only Drive session and local simulated Orchestrators.
 """
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ from urllib.parse import urlsplit
 
 from arm_foreground import ForegroundMonitor
 from arm_pause_state import PauseStateError, PauseStateStore, public_pause_state
-from drive_change_detector import DetectionError
+from drive_auth import DriveAuthError, DriveAuthSession
+from drive_adapter import DriveClient, DriveHttpError
+from drive_change_detector import DetectionError, DriveMetadataProvider
+import project_folder_config
 from project_registry import ProjectRegistry, ProjectRegistryError
 from relay_userhost import SingleInstanceLock
 
@@ -35,9 +38,13 @@ class UserHostError(ValueError):
     """Sanitized ARM v2 user-host configuration or ownership failure."""
 
 
-CONFIG_KEYS = {
+LEGACY_CONFIG_KEYS = {
     "schemaVersion", "registryPath", "detectorStatePath", "notificationLedgerPath",
     "providerFixturePath", "testSecrets", "intervalSeconds", "stopTimeoutSeconds",
+}
+COMMON_CONFIG_KEYS = {
+    "schemaVersion", "registryPath", "detectorStatePath", "notificationLedgerPath",
+    "testSecrets", "intervalSeconds", "stopTimeoutSeconds",
 }
 MAX_CONFIG_BYTES = 32768
 MAX_HEARTBEAT_BYTES = 32768
@@ -234,17 +241,37 @@ def _process_is_alive(pid: int) -> bool:
         return False
 
 
+def _drive_client_file() -> Path:
+    value = os.environ.get("RELAY_GDRIVE_OAUTH_CLIENT_FILE")
+    if (not isinstance(value, str) or not value or value.startswith(("\\\\", "//"))
+            or not Path(value).is_absolute()):
+        raise UserHostError("Drive provider requires the configured OAuth client file")
+    candidate = Path(value)
+    try:
+        path = candidate.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        raise UserHostError("Drive OAuth client file is unavailable") from None
+    if (not path.is_file()
+            or os.path.normcase(os.path.normpath(str(candidate)))
+            != os.path.normcase(os.path.normpath(str(path)))):
+        raise UserHostError("Drive OAuth client file is unavailable")
+    return path
+
+
 class HostConfig:
     def __init__(self, path: Path, values: dict, raw_digest: str):
         self.path = path
         self.registry_path = _canonical_file(values["registryPath"], "project registry")
         self.detector_path = _canonical_output_file(values["detectorStatePath"], "detector state")
         self.ledger_path = _canonical_output_file(values["notificationLedgerPath"], "notification ledger")
-        self.fixture_path = _canonical_file(values["providerFixturePath"], "provider fixture")
+        self.provider_mode = values.get("providerMode", "fixture")
+        self.fixture_path = (_canonical_file(values["providerFixturePath"], "provider fixture")
+                             if self.provider_mode == "fixture" else None)
         self.test_secrets = {key: base64.b64decode(value, validate=True)
                              for key, value in values["testSecrets"].items()}
         self.interval_seconds = values["intervalSeconds"]
         self.stop_timeout_seconds = values["stopTimeoutSeconds"]
+        self.max_monitor_observations = values.get("maxMonitorObservations")
         self.config_digest = raw_digest
         identity_fields = [os.path.normcase(os.path.normpath(str(path)))
                            for path in (self.registry_path, self.detector_path, self.ledger_path)]
@@ -256,6 +283,7 @@ class HostConfig:
         self.start_lock_path = self.control_dir / "start.lock"
         self.heartbeat_path = self.control_dir / "heartbeat.json"
         self.stop_path = self.control_dir / "stop.json"
+        self.observation_budget_path = self.control_dir / "observation-budget.json"
         self.log_path = self.control_dir / "worker.jsonl"
         self.pause_store = PauseStateStore(self.control_dir, self.state_identity, self.config_digest)
 
@@ -277,9 +305,26 @@ def load_config(path: Path) -> HostConfig:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
         raise UserHostError("host configuration is invalid") from None
-    if (not isinstance(values, dict) or set(values) != CONFIG_KEYS
-            or type(values.get("schemaVersion")) is not int or values["schemaVersion"] != 1):
+    if not isinstance(values, dict):
         raise UserHostError("host configuration schema is invalid")
+    keys = set(values)
+    legacy_fixture = keys == LEGACY_CONFIG_KEYS
+    explicit_fixture = (keys == COMMON_CONFIG_KEYS | {"providerMode", "providerFixturePath"}
+                        and values.get("providerMode") == "fixture")
+    explicit_drive = (keys == COMMON_CONFIG_KEYS | {"providerMode"}
+                      and values.get("providerMode") == "drive")
+    bounded_drive = (keys == COMMON_CONFIG_KEYS | {"providerMode", "maxMonitorObservations"}
+                     and values.get("providerMode") == "drive")
+    if not (legacy_fixture or explicit_fixture or explicit_drive or bounded_drive):
+        raise UserHostError("host configuration schema is invalid")
+    if type(values.get("schemaVersion")) is not int or values["schemaVersion"] != 1:
+        raise UserHostError("host configuration schema is invalid")
+    if bounded_drive and (type(values.get("maxMonitorObservations")) is not int
+                          or not 1 <= values["maxMonitorObservations"] <= 6):
+        raise UserHostError("Drive monitor observation limit must be between 1 and 6")
+    if not bounded_drive and "maxMonitorObservations" in values:
+        raise UserHostError("monitor observation limit is valid only in explicit Drive mode")
+    provider_mode = "fixture" if legacy_fixture else values.get("providerMode")
     for name in ("registryPath", "detectorStatePath", "notificationLedgerPath"):
         if not isinstance(values[name], str) or not Path(values[name]).is_absolute():
             raise UserHostError("host runtime path is invalid")
@@ -292,26 +337,172 @@ def load_config(path: Path) -> HostConfig:
             or any(not isinstance(k, str) or not k.startswith("test:") or len(k) > 256
                    or not isinstance(v, str) or len(v) > 2048 for k, v in secrets_value.items())):
         raise UserHostError("offline test key map is invalid")
+    if provider_mode == "drive":
+        _drive_client_file()
     try:
         config = HostConfig(resolved, values, hashlib.sha256(raw).hexdigest())
     except (KeyError, TypeError, ValueError, OSError):
         raise UserHostError("host configuration is invalid") from None
     if any(len(key) < 16 for key in config.test_secrets.values()):
         raise UserHostError("offline test key is invalid")
-    paths = [config.registry_path, config.detector_path, config.ledger_path, config.fixture_path,
-             config.path]
+    paths = [config.registry_path, config.detector_path, config.ledger_path, config.path]
+    if config.fixture_path is not None:
+        paths.append(config.fixture_path)
     norm = [os.path.normcase(os.path.normpath(str(p))) for p in paths]
     if len(set(norm)) != len(norm):
         raise UserHostError("host files must have distinct paths")
-    for p in (config.registry_path, config.fixture_path, config.path):
+    for p in (config.registry_path, config.path):
         if not _inside_local_app_data(p):
             raise UserHostError("host input files must remain under current-user local data")
+    if config.fixture_path is not None and not _inside_local_app_data(config.fixture_path):
+        raise UserHostError("host input files must remain under current-user local data")
     for p in (config.detector_path, config.ledger_path):
         if not _inside_local_app_data(p.parent):
             raise UserHostError("host state files must remain under current-user local data")
     _ensure_loopback_registry(config.registry_path)
-    _read_json(config.fixture_path, 4 * 1024 * 1024)
+    if config.fixture_path is not None:
+        _read_json(config.fixture_path, 4 * 1024 * 1024)
     return config
+
+
+class AuthenticatedDriveMetadataProvider:
+    """Read-only Drive metadata adapter bound to registered project folders."""
+
+    fatal_error_types = (DriveAuthError,)
+
+    def __init__(self, registry_path: Path, *, session_factory=DriveAuthSession,
+                 client_factory=DriveClient, request_class=None):
+        self.registry = ProjectRegistry(registry_path)
+        try:
+            import drive_auth
+            client_config = drive_auth._client_config()
+            token_uri = urlsplit(client_config["installed"]["token_uri"])
+            token_port = token_uri.port
+        except Exception:
+            raise UserHostError("Drive OAuth client configuration is invalid") from None
+        if (token_uri.scheme != "https" or token_uri.hostname != "oauth2.googleapis.com"
+                or token_port not in (None, 443) or token_uri.username or token_uri.password
+                or token_uri.path != "/token" or token_uri.query or token_uri.fragment):
+            raise UserHostError("Drive OAuth token endpoint is not approved")
+        try:
+            self.session = (session_factory(request_class=request_class) if request_class is not None
+                            else session_factory())
+        except DriveAuthError:
+            raise
+        except Exception:
+            raise UserHostError("protected Drive session initialization failed") from None
+        self.client_factory = client_factory
+        self.client = None
+        self.metadata = None
+        self.calls_by_folder = {}
+
+    def _client(self):
+        try:
+            token = self.session.access_token()
+        except DriveAuthError:
+            raise
+        except Exception:
+            raise UserHostError("protected Drive session token acquisition failed") from None
+        if self.client is None:
+            self.client = self.client_factory(token)
+            self.metadata = DriveMetadataProvider(self.client)
+        else:
+            self.client.token = token
+        return self.client
+
+    def folder(self, folder_id):
+        try:
+            return self._client().metadata(folder_id)
+        except DriveHttpError as exc:
+            if exc.status_code == 401:
+                self.session.invalidate()
+                raise DriveAuthError("Google Drive session was rejected") from None
+            raise
+
+    def children(self, root_id):
+        try:
+            return self._client().list_children(root_id)
+        except DriveHttpError as exc:
+            if exc.status_code == 401:
+                self.session.invalidate()
+                raise DriveAuthError("Google Drive session was rejected") from None
+            raise
+
+    def list_folder(self, folder_id):
+        registry = self.registry.load()
+        project = next((item for item in registry["folderProjects"]
+                       if folder_id in {item["architectPromptsFolderId"],
+                                        item["executorReportsFolderId"]}), None)
+        if project is None:
+            raise UserHostError("Drive folder is not registered")
+        try:
+            project_folder_config.validate_project(project, self)
+        except DriveAuthError:
+            raise
+        except Exception:
+            raise UserHostError("registered Drive folder identity could not be verified") from None
+        self.calls_by_folder[folder_id] = self.calls_by_folder.get(folder_id, 0) + 1
+        try:
+            return self.metadata.list_folder(folder_id)
+        except DriveHttpError as exc:
+            if exc.status_code == 401:
+                self.session.invalidate()
+                raise DriveAuthError("Google Drive session was rejected") from None
+            raise
+
+
+def _provider_network_destination_allowed(provider_mode: str, address) -> bool:
+    if (not isinstance(address, tuple) or len(address) < 2
+            or not isinstance(address[0], str) or type(address[1]) is not int):
+        return False
+    host, port = address[0], address[1]
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return True
+    except ValueError:
+        if host.casefold() == "localhost":
+            return True
+    return (provider_mode == "drive" and port == 443
+            and host.casefold() in {"www.googleapis.com", "oauth2.googleapis.com"})
+
+
+def _google_token_url_allowed(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return (parsed.scheme == "https" and parsed.hostname == "oauth2.googleapis.com"
+            and port in (None, 443) and not parsed.username and not parsed.password
+            and parsed.path == "/token" and not parsed.query and not parsed.fragment)
+
+
+class _RestrictedGoogleTokenRequest:
+    """Use the existing Google auth request only for the fixed token endpoint."""
+
+    def __init__(self):
+        try:
+            from google.auth.transport.requests import Request
+            import requests
+        except ImportError:
+            raise DriveAuthError("Google OAuth dependencies are not installed") from None
+
+        class DirectSession(requests.Session):
+            def request(self, method, url, *args, **kwargs):
+                if not _google_token_url_allowed(url):
+                    raise DriveAuthError("OAuth token request destination is not approved")
+                kwargs["allow_redirects"] = False
+                return super().request(method, url, *args, **kwargs)
+
+        self.session = DirectSession()
+        self.session.trust_env = False
+        self.session.proxies.clear()
+        self._request = Request(session=self.session)
+
+    def __call__(self, url, *args, **kwargs):
+        if not _google_token_url_allowed(url):
+            raise DriveAuthError("OAuth token request destination is not approved")
+        return self._request(url, *args, **kwargs)
 
 
 def _ensure_loopback_registry(registry_path: Path) -> dict:
@@ -412,6 +603,31 @@ def _safe_prior_cycle(config: HostConfig) -> int:
     return previous["cycle"]
 
 
+def _observation_budget(config: HostConfig) -> dict | None:
+    limit = config.max_monitor_observations
+    if limit is None:
+        return None
+    if not config.observation_budget_path.exists():
+        return {"schemaVersion": 1, "stateIdentity": config.state_identity,
+                "configDigest": config.config_digest, "limit": limit, "consumed": 0}
+    value = _read_json(config.observation_budget_path, 4096)
+    if (not isinstance(value, dict)
+            or set(value) != {"schemaVersion", "stateIdentity", "configDigest", "limit", "consumed"}
+            or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1
+            or value.get("stateIdentity") != config.state_identity
+            or value.get("configDigest") != config.config_digest
+            or type(value.get("limit")) is not int or value.get("limit") != limit
+            or type(value.get("consumed")) is not int
+            or not 0 <= value["consumed"] <= limit):
+        raise UserHostError("Drive observation budget is invalid or belongs to another host state")
+    return value
+
+
+def _persist_observation_budget(config: HostConfig, budget: dict) -> None:
+    config.control_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_json(config.observation_budget_path, budget, maximum=4096)
+
+
 def _heartbeat(config: HostConfig, *, state: str, worker_id: str, cycle: int,
                recent: dict | None, pause_state: dict, error: str | None = None) -> dict:
     pid = os.getpid()
@@ -492,29 +708,31 @@ def _read_stop(config: HostConfig, worker_id: str) -> bool:
             and request["workerInstanceId"] == worker_id)
 
 
-def _worker(config_path: Path) -> int:
+def _worker(config_path: Path, *, session_factory=DriveAuthSession,
+            client_factory=DriveClient, fixture_provider_factory=ReloadingFixtureProvider) -> int:
     config = load_config(config_path)
-    if ("RELAY_GDRIVE_ACCESS_TOKEN" in os.environ
-            or "RELAY_GDRIVE_OAUTH_CLIENT_FILE" in os.environ):
-        raise UserHostError("M05 fixture worker refuses OAuth environment inputs")
+    if "RELAY_GDRIVE_ACCESS_TOKEN" in os.environ:
+        raise UserHostError("UserHost refuses access-token environment inputs")
+    if config.provider_mode == "fixture" and "RELAY_GDRIVE_OAUTH_CLIENT_FILE" in os.environ:
+        raise UserHostError("fixture worker refuses OAuth environment inputs")
     config.control_dir.mkdir(parents=True, exist_ok=True)
     worker_lock = SingleInstanceLock(config.worker_lock_path)
     if not worker_lock.acquire():
         return 3
     worker_id = secrets.token_hex(16)
     stop_network = socket.create_connection
+    removed_proxy_environment = {}
+    if config.provider_mode == "drive":
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            if name in os.environ:
+                removed_proxy_environment[name] = os.environ.pop(name)
 
-    def loopback_connection(address, *args, **kwargs):
-        host = address[0]
-        try:
-            allowed = ipaddress.ip_address(host).is_loopback
-        except ValueError:
-            allowed = isinstance(host, str) and host.casefold() == "localhost"
-        if not allowed:
-            raise OSError("M05 offline host blocked non-loopback network access")
+    def guarded_connection(address, *args, **kwargs):
+        if not _provider_network_destination_allowed(config.provider_mode, address):
+            raise OSError("UserHost blocked a network destination outside its provider allowlist")
         return stop_network(address, *args, **kwargs)
 
-    socket.create_connection = loopback_connection
+    socket.create_connection = guarded_connection
     cycle = 0
     recent = None
     pause_state = {"globalPaused": False, "pausedProjectIds": [], "pendingRequest": None,
@@ -533,13 +751,23 @@ def _worker(config_path: Path) -> int:
                        if project["enabled"]}
         if any(reference not in config.test_secrets for reference in secret_refs):
             raise UserHostError("offline test key is missing for an enabled project")
-        provider = ReloadingFixtureProvider(config.fixture_path)
+        if config.provider_mode == "fixture":
+            provider = fixture_provider_factory(config.fixture_path)
+        else:
+            if session_factory is DriveAuthSession:
+                provider = AuthenticatedDriveMetadataProvider(
+                    config.registry_path, session_factory=session_factory, client_factory=client_factory,
+                    request_class=_RestrictedGoogleTokenRequest)
+            else:
+                provider = AuthenticatedDriveMetadataProvider(
+                    config.registry_path, session_factory=session_factory, client_factory=client_factory)
         monitor = ForegroundMonitor(
             config.registry_path, config.detector_path, config.ledger_path,
             provider=provider,
             secret_resolver=config.test_secrets.get,
             interval_seconds=config.interval_seconds, dispatch_limit=8,
         )
+        budget = _observation_budget(config)
         while True:
             if _read_stop(config, worker_id):
                 stopped = _heartbeat(config, state="STOPPED", worker_id=worker_id,
@@ -571,6 +799,16 @@ def _worker(config_path: Path) -> int:
                 state = "PAUSED"
                 delay = min(config.interval_seconds, 5)
             else:
+                if budget is not None:
+                    if budget["consumed"] >= budget["limit"]:
+                        stopped = _heartbeat(config, state="STOPPED", worker_id=worker_id,
+                                             cycle=cycle, recent=recent, pause_state=pause_state)
+                        _atomic_json(config.heartbeat_path, stopped)
+                        _append_log(config, {"recentCycle": recent})
+                        return 0
+                    # Consume before polling so a crash cannot reset the live-run bound.
+                    budget["consumed"] += 1
+                    _persist_observation_budget(config, budget)
                 cycle += 1
                 call_counts_before = dict(provider.calls_by_folder)
                 record = _safe_cycle(monitor.cycle(cycle, paused_project_ids=pause_state["pausedProjectIds"]))
@@ -595,6 +833,12 @@ def _worker(config_path: Path) -> int:
                 pause_state = config.pause_store.load(project_ids)
                 if pause_state["pendingRequest"] is not None:
                     pause_state, _changed = config.pause_store.apply_pending(project_ids, worker_id)
+                if budget is not None and budget["consumed"] >= budget["limit"]:
+                    stopped = _heartbeat(config, state="STOPPED", worker_id=worker_id,
+                                         cycle=cycle, recent=recent, pause_state=pause_state)
+                    _atomic_json(config.heartbeat_path, stopped)
+                    _append_log(config, {"recentCycle": recent})
+                    return 0
                 state = _heartbeat_state(registry, pause_state, recent)
                 delay = monitor.interval_seconds
                 if record["status"] == "DEGRADED":
@@ -625,6 +869,7 @@ def _worker(config_path: Path) -> int:
         return 2
     finally:
         socket.create_connection = stop_network
+        os.environ.update(removed_proxy_environment)
         worker_lock.release()
 
 
@@ -748,6 +993,28 @@ def _emit(value: dict) -> int:
     return 2
 
 
+def _bounded_worker_completed(config: HostConfig, worker) -> dict | None:
+    """Recognize only a verified UserHost exit after consuming its configured cap."""
+    if (config.max_monitor_observations is None or worker.returncode != 0
+            or _probe_lock(config.worker_lock_path)):
+        return None
+    try:
+        heartbeat = _read_json(config.heartbeat_path, MAX_HEARTBEAT_BYTES)
+        budget = _observation_budget(config)
+    except UserHostError:
+        return None
+    if (not isinstance(heartbeat, dict) or heartbeat.get("state") != "STOPPED"
+            or heartbeat.get("stateIdentity") != config.state_identity
+            or heartbeat.get("configDigest") != config.config_digest
+            or heartbeat.get("pid") != worker.pid
+            or type(heartbeat.get("cycle")) is not int
+            or not isinstance(heartbeat.get("recentCycle"), dict)
+            or heartbeat["recentCycle"].get("cycle") != heartbeat["cycle"]
+            or budget is None or budget["consumed"] != budget["limit"]):
+        return None
+    return {"result": "STOPPED", "reason": "OBSERVATION_LIMIT", "cycle": heartbeat["cycle"]}
+
+
 def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
     config = load_config(config_path)
     registry = _ensure_loopback_registry(config.registry_path)
@@ -769,7 +1036,8 @@ def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
         command = [sys.executable, str(Path(__file__).resolve()), "--config", str(config.path), "_worker"]
         env = dict(os.environ)
         env.pop("RELAY_GDRIVE_ACCESS_TOKEN", None)
-        env.pop("RELAY_GDRIVE_OAUTH_CLIENT_FILE", None)
+        if config.provider_mode == "fixture":
+            env.pop("RELAY_GDRIVE_OAUTH_CLIENT_FILE", None)
         env["PYTHONUNBUFFERED"] = "1"
         flags = 0
         if os.name == "nt":
@@ -784,6 +1052,9 @@ def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
         deadline = time.monotonic() + ready_timeout_seconds
         while time.monotonic() < deadline:
             if worker.poll() is not None:
+                bounded = _bounded_worker_completed(config, worker)
+                if bounded is not None:
+                    return _emit(bounded)
                 return _emit({"result": "START_FAILED", "error": "WORKER_EXITED"})
             if _probe_lock(config.worker_lock_path):
                 try:
@@ -797,6 +1068,9 @@ def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
                                   "status": heartbeat["state"]})
             time.sleep(0.05)
         if worker.poll() is not None:
+            bounded = _bounded_worker_completed(config, worker)
+            if bounded is not None:
+                return _emit(bounded)
             return _emit({"result": "START_FAILED", "error": "WORKER_EXITED"})
         return _emit({"result": "DEGRADED", "error": "READY_TIMEOUT", "pid": worker.pid,
                       "controllerPid": os.getpid()})

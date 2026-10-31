@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from arm_foreground import ForegroundMonitor
+from drive_auth import DriveAuthError
 from drive_change_detector import FixtureProvider
 from project_folder_config import FakeDriveProvider
 from project_registry import ProjectRegistry, ProjectRegistryError
@@ -228,6 +229,18 @@ class ForegroundMonitorTests(unittest.TestCase):
         state = json.loads(self.detector_path.read_text(encoding="utf-8"))
         self.assertEqual({record["projectId"] for record in state["folders"].values()}, {"project-a"})
         self.assertEqual(self.apo_a.request_count + self.apo_b.request_count, 0)
+
+    def test_fatal_provider_authentication_failure_stops_before_pending_dispatch(self):
+        class ExpiredSessionProvider:
+            fatal_error_types = (DriveAuthError,)
+            def list_folder(self, _folder_id):
+                raise DriveAuthError("sanitized token refresh failure")
+
+        with self.assertRaises(DriveAuthError):
+            self.monitor(ExpiredSessionProvider()).cycle(1)
+        self.assertEqual(self.apo_a.request_count + self.apo_b.request_count, 0)
+        self.assertFalse(self.detector_path.exists())
+        self.assertFalse(self.ledger_path.exists())
 
     def test_per_project_pause_suppresses_scan_and_dispatch_while_peer_progresses(self):
         provider = SequenceProvider([snapshots(), snapshots(arrivals=True, changed=True),

@@ -204,3 +204,18 @@ On 31 October 2026, the Architect independently reviewed the saved sanitized qua
 This qualifies only one real Drive prompt-folder arrival through ARM to a **local simulated** Orchestrator. Real/production Orchestrator integration (D21), live report-folder event coverage, unattended OAuth longevity, and complete Release 1 are not qualified. The current documentation synchronization is limited to the named three files and branch; it authorizes no runtime work, additional live test, main merge, release, or successor milestone.
 
 Historical support STOP remains **TRIGGERED**, exact count **UNCERTAIN**, and the five-milestone CORE checkpoint **OVERDUE**. M02.1D remains **PARKED**; D27 remains **FROZEN**; D21 production Orchestrator integration remains **NOT AUTHORIZED**.
+
+## ARM.M06.S2B - Windows UserHost real Drive provider integration
+
+The Human-authorized 2026-10-31 CORE candidate connects the accepted readonly Google Drive session and metadata provider to the existing manually launched detached UserHost. The fixed objective, implementation boundary, offline qualification, live gate and governance status are in `docs/ARM_M06_STAGE2B.md`. Explicit fixture/drive modes preserve legacy fixture behavior; real Drive mode remains restricted to the protected `drive.readonly` session and local simulated Orchestrator.
+
+The current candidate must not be represented as live-qualified until the S2B evidence record establishes the actual detached UserHost's live result. Historical support STOP remains TRIGGERED/count UNCERTAIN and checkpoint OVERDUE. M02.1D remains PARKED; D27 remains FROZEN; real/production D21 remains NOT AUTHORIZED. No Git publication is authorized by the milestone instruction.
+
+S2B Executor qualification update (2026-10-31): the full offline suite passed 189/189; compilation, diff check, and four offline demonstrations passed. One actual detached UserHost live run then passed against the approved isolated Drive prompt folder and local simulated Orchestrator: silent baseline, one `PROMPT_CHANGED` arrival, metadata-only signed delivery, matching durable ACK, restart deduplication, four total observations, exact test-file deletion, and clean worker/receiver shutdown. Sanitized evidence is in ignored `.agent-work/milestones/ARM.M06.S2B/evidence/`. This is an Executor PASS candidate pending independent Architect review; no commit or push occurred. Production D21, D27 and Release 1 gaps remain unchanged.
+
+
+## M06.S2B authentication propagation repair 1A (2026-10-31)
+
+The bounded offline repair preserves `DriveAuthError` across the Drive folder-validation boundary in `arm_v2_userhost.py`; unrelated validation/provider exceptions remain sanitized as `UserHostError`. The existing ForegroundMonitor fatal-authentication path is unchanged. A regression injects a refresh failure after session construction and verifies terminal worker exit, sanitized status, safe lock release, no delivery, and preservation of the pre-existing pending notification. Ordinary provider errors retain bounded degraded-scan behavior.
+
+Validation: focused regressions 4/4; UserHost and ForegroundMonitor modules 22/22; full unittest discovery 190/190; Python compilation and `git diff --check` passed. No live operation or Git publication occurred. This repair does not resolve the historical limitations in the live qualification record: a durable live ledger snapshot is unavailable, and overwritten M05 demonstration evidence is not reconstructed.
