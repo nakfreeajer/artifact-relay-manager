@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -134,20 +135,81 @@ class DashboardTests(unittest.TestCase):
         rows = self.app.latest["projects"]
         self.assertEqual([row["projectId"] for row in rows], ["project-a", "project-b"])
         self.assertTrue(all(not row["enabled"] for row in rows))
+        self.assertEqual(app.enable_button.cget("text"), "Enable Project")
+        self.assertEqual(app.disable_button.cget("text"), "Disable Project")
         self.app.project_table.selection_set("project-a")
         self.tk_root.update()
+        registry_before = self.registry_path.read_bytes()
+        with patch.object(ProjectRegistry, "dashboard_write", side_effect=ProjectRegistryError("fixture failure")):
+            self.app.enable_button.invoke()
+        self.assertIn("Project enable rejected", app.notice_text.get())
+        self.assertEqual(self.registry_path.read_bytes(), registry_before)
         self.app.enable_button.invoke()
         self.wait_idle()
         self.assertTrue(next(row for row in self.app.latest["projects"] if row["projectId"] == "project-a")["enabled"])
+        self.assertIn("Project enabled for monitoring", app.notice_text.get())
         self.app.project_table.selection_set("project-a")
         self.tk_root.update()
         self.app.disable_button.invoke()
         self.wait_idle()
         self.assertFalse(next(row for row in self.app.latest["projects"] if row["projectId"] == "project-a")["enabled"])
+        self.assertIn("Project disabled for monitoring", app.notice_text.get())
+        registry_before = self.registry_path.read_bytes()
+        with patch.object(ProjectRegistry, "dashboard_write", side_effect=ProjectRegistryError("fixture failure")):
+            self.app._set_enabled(False)
+        self.assertIn("Project disable rejected", app.notice_text.get())
+        self.assertEqual(self.registry_path.read_bytes(), registry_before)
         serialized = json.dumps(self.app.latest, sort_keys=True)
         self.assertNotIn("offline-project-a-key", serialized)
         self.assertNotIn("worker-fixture.json", serialized)
         self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
+
+    def test_refresh_keeps_controls_stable_and_reports_queued_control_outcome(self):
+        app = self.open_app()
+        self.add_through_ui("project-a", "root-a", "http://127.0.0.1:49152/notify")
+        app.project_table.selection_set("project-a")
+        self.tk_root.update()
+
+        controls = (app.start_button, app.stop_button, app.refresh_button,
+                    app.enable_button, app.disable_button, app.pause_all_button,
+                    app.resume_all_button, app.pause_project_button,
+                    app.resume_project_button, app.edit_button, app.remove_button)
+        before = tuple(str(button.cget("state")) for button in controls)
+        for _ in range(2):
+            app._queue_refresh()
+            self.wait_idle()
+            self.assertEqual(tuple(str(button.cget("state")) for button in controls), before)
+        refresh_started = threading.Event()
+        release_refresh = threading.Event()
+        actual_snapshot = dashboard_snapshot
+        blocked_once = [False]
+
+        def blocked_snapshot(config_path):
+            if not blocked_once[0]:
+                blocked_once[0] = True
+                refresh_started.set()
+                if not release_refresh.wait(5):
+                    raise RuntimeError("test snapshot gate timed out")
+            return actual_snapshot(config_path)
+
+        with patch("arm_v2_dashboard.dashboard_snapshot", side_effect=blocked_snapshot), \
+                patch("arm_v2_dashboard._status_command", return_value=(0, {"result": "STARTED", "status": "RUNNING"})) as command:
+            app._queue_refresh()
+            self.assertTrue(refresh_started.wait(2), "snapshot did not reach the controlled gate")
+            during = tuple(str(button.cget("state")) for button in controls)
+            self.assertEqual(during, before)
+
+            # Invoke the actual Tk button while a read-only refresh is in flight.
+            app.start_button.invoke()
+            self.assertIn("queued", app.notice_text.get().lower())
+            app.stop_button.invoke()
+            self.assertIn("Additional control not queued", app.notice_text.get())
+            release_refresh.set()
+            self.wait_idle(timeout=8)
+
+        start_calls = [call for call in command.call_args_list if call.args[1] == "start"]
+        self.assertEqual(len(start_calls), 1)
+        self.assertIn("Monitor started", app.notice_text.get())
 
     def test_selected_project_survives_three_real_refreshes_and_pause_resume_controls_work(self):
         app = self.open_app()
@@ -250,6 +312,21 @@ class DashboardTests(unittest.TestCase):
         self.detector_path.write_text("{broken", encoding="utf-8")
         with self.assertRaises(DashboardError):
             dashboard_snapshot(self.config_path)
+
+    def test_automatic_status_snapshot_does_not_spawn_host_cli_process(self):
+        registry = ProjectRegistry(self.registry_path)
+        registry.configure_folder_project(project_id="project-a", display_name="Project A",
+            root_url="https://drive.google.com/drive/folders/root-a", prompts_id="prompts-a",
+            reports_id="reports-a", endpoint="http://127.0.0.1:49152/notify",
+            provider=FakeDriveProvider(folder_fixture()), secret_ref="test:project-a")
+
+        with patch("arm_v2_dashboard.subprocess.run",
+                   side_effect=AssertionError("status refresh must not spawn a process")) as run:
+            snapshot = dashboard_snapshot(self.config_path)
+
+        run.assert_not_called()
+        self.assertEqual(snapshot["host"]["status"], "STOPPED")
+        self.assertEqual(snapshot["projects"][0]["status"], "DISABLED_NOT_POLLED")
 
     def test_display_name_edit_uses_real_tk_callback_and_preserves_transport_identity(self):
         app = self.open_app()

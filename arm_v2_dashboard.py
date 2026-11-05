@@ -82,7 +82,7 @@ def dashboard_snapshot(config_path: Path):
         sender = arm_notification.NotificationSender(config.registry_path, config.detector_path,
             config.ledger_path, secret_resolver=lambda ref: config.test_secrets[ref])
         counts = sender.status()
-        _status_code, host = _status_command(Path(config_path), "status")
+        host = arm_v2_userhost.status(Path(config_path))
     except DashboardError:
         raise
     except Exception:
@@ -141,6 +141,9 @@ class DashboardApp:
         self.folder_validation_fixture = Path(folder_validation_fixture)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arm-dashboard")
         self.future = None
+        self._future_kind = None
+        self._queued_control = None
+        self._refresh_after_current = False
         self.latest = None
         self.last_error = None
         self._pending_control_watch = None
@@ -198,9 +201,9 @@ class DashboardApp:
         self.project_table.pack(fill="x", pady=(4, 6))
         row_controls = ttk.Frame(left)
         row_controls.pack(fill="x")
-        self.enable_button = ttk.Button(row_controls, text="Start Project", command=lambda: self._set_enabled(True))
+        self.enable_button = ttk.Button(row_controls, text="Enable Project", command=lambda: self._set_enabled(True))
         self.enable_button.pack(side="left", padx=(0, 6))
-        self.disable_button = ttk.Button(row_controls, text="Stop Project", command=lambda: self._set_enabled(False))
+        self.disable_button = ttk.Button(row_controls, text="Disable Project", command=lambda: self._set_enabled(False))
         self.disable_button.pack(side="left", padx=6)
         self.pause_project_button = ttk.Button(row_controls, text="Pause Selected",
             command=lambda: self._queue_selected_control("pause"))
@@ -258,8 +261,9 @@ class DashboardApp:
 
     def _queue_refresh(self):
         if self.future is not None:
+            self._refresh_after_current = True
             return
-        self._set_controls_busy(True)
+        self._future_kind = "snapshot"
         self.future = self.executor.submit(dashboard_snapshot, self.config_path)
         self.root.after(50, self._poll_future)
 
@@ -274,7 +278,18 @@ class DashboardApp:
 
     def _queue_control(self, command, project_id=None):
         if self.future is not None:
+            if self._future_kind == "snapshot" and self._queued_control is None:
+                self._queued_control = (command, project_id)
+                self.notice_text.set("Control queued; it will run after this status refresh.")
+            elif self._future_kind == "snapshot":
+                self.notice_text.set("Additional control not queued; the first request is still waiting for this refresh.")
+            else:
+                self.notice_text.set("Control not submitted: another host control is running. Wait for its result, then retry.")
             return
+        self._start_control(command, project_id)
+
+    def _start_control(self, command, project_id=None):
+        self._future_kind = "control"
         self._set_controls_busy(True)
         self.future = self.executor.submit(_status_command, self.config_path, command,
             max(20, arm_v2_userhost.MAX_STOP_SECONDS + 5), project_id)
@@ -297,8 +312,11 @@ class DashboardApp:
         if not future.done():
             self.root.after(50, self._poll_future)
             return
+        future_kind = self._future_kind
         self.future = None
-        self._set_controls_busy(False)
+        self._future_kind = None
+        if future_kind == "control":
+            self._set_controls_busy(False)
         try:
             value = future.result()
             if isinstance(value, tuple):
@@ -316,9 +334,8 @@ class DashboardApp:
                     }
                 self._pending_command = None
                 self._pending_project_id = None
-                self._set_controls_busy(True)
-                self.future = self.executor.submit(dashboard_snapshot, self.config_path)
-                self.root.after(50, self._poll_future)
+                self._refresh_after_current = False
+                self._queue_refresh()
                 return
             else:
                 self.latest = value
@@ -328,6 +345,16 @@ class DashboardApp:
             self.last_error = "LOCAL_STATE_INVALID"
             self.notice_text.set("Local configuration or durable state is invalid; no action was taken.")
         self._render()
+        if self._queued_control is not None:
+            command, project_id = self._queued_control
+            self._queued_control = None
+            if self.latest is None:
+                self.notice_text.set("Queued control not sent because refreshed local state is invalid; no action was taken.")
+            else:
+                self._start_control(command, project_id)
+        elif self._refresh_after_current:
+            self._refresh_after_current = False
+            self._queue_refresh()
 
     @staticmethod
     def _control_message(command, code, payload, project_id=None):
@@ -527,11 +554,12 @@ class DashboardApp:
                 registry.validate_folder_projects(provider, project_id)
                 registry.set_folder_project_enabled(project_id, enabled)
             registry.dashboard_write(change)
-            self.notice_text.set("Project started; monitoring eligibility enabled." if enabled
-                                 else "Project stopped at the next monitor boundary; durable events were preserved.")
+            self.notice_text.set("Project enabled for monitoring on the next host cycle." if enabled
+                                 else "Project disabled for monitoring on the next host cycle; durable events were preserved.")
             self._queue_refresh()
         except Exception:
-            self.notice_text.set("Project Start/Stop rejected; local state or folder validation failed closed.")
+            action = "enable" if enabled else "disable"
+            self.notice_text.set(f"Project {action} rejected; local state or folder validation failed closed.")
 
     def edit_selected(self):
         project_id = self._selected_project()
