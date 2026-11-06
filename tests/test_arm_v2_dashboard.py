@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import threading
 import time
@@ -11,7 +12,7 @@ import tkinter as tk
 import unittest
 from unittest.mock import patch
 
-from arm_v2_dashboard import DashboardApp, DashboardError, _loopback_endpoint, dashboard_snapshot
+from arm_v2_dashboard import DashboardApp, DashboardError, _loopback_endpoint, _status_command, dashboard_snapshot
 from arm_v2_userhost import status as host_status
 from project_folder_config import FakeDriveProvider
 from project_registry import ProjectRegistry, ProjectRegistryError
@@ -80,6 +81,25 @@ class DashboardTests(unittest.TestCase):
         self.app.add_project()
         self.wait_idle()
         return self.app.latest
+
+    def configure_drive_mode_project(self):
+        registry = ProjectRegistry(self.registry_path)
+        registry.configure_folder_project(project_id="project-a", display_name="Project A",
+            root_url="https://drive.google.com/drive/folders/root-a", prompts_id="prompts-a",
+            reports_id="reports-a", endpoint="http://127.0.0.1:49152/notify",
+            provider=FakeDriveProvider(folder_fixture()), repository="owner/project-a",
+            secret_ref="test:project-a", enabled=True)
+        drive_client_path = self.root / "synthetic-client-location.json"
+        # The dashboard preflight checks the configured client path only; this file is never read.
+        drive_client_path.write_text("{}", encoding="utf-8")
+        self.config_path.write_text(json.dumps({
+            "schemaVersion": 1, "registryPath": str(self.registry_path),
+            "detectorStatePath": str(self.detector_path), "notificationLedgerPath": str(self.ledger_path),
+            "providerMode": "drive",
+            "testSecrets": {ref: base64.b64encode(key).decode("ascii") for ref, key in KEYS.items()},
+            "intervalSeconds": 1, "stopTimeoutSeconds": 6,
+        }), encoding="utf-8")
+        return drive_client_path
 
     def test_endpoint_boundary_accepts_loopback_only(self):
         for endpoint in ("http://localhost:8080/notify", "http://127.0.0.1:49152/notify",
@@ -327,6 +347,101 @@ class DashboardTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(snapshot["host"]["status"], "STOPPED")
         self.assertEqual(snapshot["projects"][0]["status"], "DISABLED_NOT_POLLED")
+
+    def test_drive_snapshot_is_truthful_and_dashboard_disables_project_mutations(self):
+        drive_client_path = self.configure_drive_mode_project()
+        event_id = "m03-" + "a" * 64
+        detector = {"schemaVersion": 2, "folders": {}, "events": [{
+            "projectId": "project-a", "eventId": event_id, "eventType": "PROMPT_CHANGED",
+            "changeKind": "ARRIVED", "fileId": "file-a", "detectedAt": "2026-11-06T00:00:00Z",
+        }], "eventIdentities": {}, "ambiguous": []}
+        ledger = {"schemaVersion": 1, "entries": {event_id: {"status": "PENDING"}}}
+        host = {"status": "RUNNING", "cycle": 7, "heartbeatAt": "2026-11-06T00:00:00Z",
+                "globalPaused": False, "pausedProjectIds": ["project-a"],
+                "recentCycle": {"projects": [{"projectId": "project-a", "status": "OK"}]}}
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                patch("arm_v2_dashboard._state_files", return_value=(detector, ledger)), \
+                patch("arm_v2_dashboard.arm_notification.NotificationSender.status",
+                      return_value={"pending": 1, "acked": 2, "queued": 3, "total": 6}), \
+                patch("arm_v2_dashboard.arm_v2_userhost.status", return_value=host):
+            snapshot = dashboard_snapshot(self.config_path)
+            app = self.open_app()
+            self.assertEqual(snapshot["providerMode"], "drive")
+            self.assertEqual(snapshot["host"]["cycle"], 7)
+            self.assertEqual(snapshot["projects"][0]["status"], "OK")
+            self.assertTrue(snapshot["projects"][0]["paused"])
+            self.assertEqual(snapshot["projects"][0]["events"], 1)
+            self.assertEqual(snapshot["history"][0]["receiptStatus"], "PENDING")
+            self.assertEqual((snapshot["pending"], snapshot["acked"], snapshot["queued"]), (1, 2, 3))
+            self.assertIn("Provider mode: Google Drive", app.mode_text.get())
+            self.assertIn("Google Drive (read-only)", app.details.get("1.0", "end"))
+            self.assertEqual(app.project_table.set("project-a", "status"), "OK")
+            self.assertEqual(app.project_table.set("project-a", "paused"), "Yes")
+            for button in (app.enable_button, app.disable_button, app.edit_button, app.remove_button,
+                           app.add_project_button):
+                self.assertEqual(str(button.cget("state")), "disabled")
+            self.assertTrue(all(str(entry.cget("state")) == "disabled"
+                                for entry in app.project_config_entries))
+
+            before = self.registry_path.read_bytes()
+            app.project_table.selection_set("project-a")
+            self.tk_root.update()
+            app.add_project()
+            app._set_enabled(False)
+            with patch("arm_v2_dashboard.messagebox.askyesno") as confirm:
+                app.edit_selected()
+                app.remove_selected()
+                confirm.assert_not_called()
+            self.assertEqual(self.registry_path.read_bytes(), before)
+            self.assertEqual(app.latest["projects"][0]["projectId"], "project-a")
+
+    def test_userhost_controls_preserve_drive_client_path_and_strip_access_token(self):
+        drive_client_path = self.configure_drive_mode_project()
+        results = [
+            (0, {"result": "STARTED", "status": "RUNNING"}),
+            (0, {"result": "STOPPED"}),
+            (0, {"result": "APPLIED", "command": "PAUSE_GLOBAL"}),
+            (0, {"result": "APPLIED", "command": "RESUME_GLOBAL"}),
+            (0, {"result": "APPLIED", "command": "PAUSE_PROJECT", "projectId": "project-a"}),
+            (0, {"result": "APPLIED", "command": "RESUME_PROJECT", "projectId": "project-a"}),
+        ]
+        completed = [subprocess.CompletedProcess([], code, json.dumps(payload), "")
+                     for code, payload in results]
+        commands = (("start", None), ("stop", None), ("pause", None), ("resume", None),
+                    ("pause", "project-a"), ("resume", "project-a"))
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path),
+                                     "RELAY_GDRIVE_ACCESS_TOKEN": "synthetic-token-must-not-cross"}, clear=False), \
+                patch("arm_v2_dashboard.subprocess.run", side_effect=completed) as run:
+            for command, project_id in commands:
+                code, payload = _status_command(self.config_path, command, project_id=project_id)
+                self.assertEqual(code, 0)
+                self.assertIn(payload["result"], {"STARTED", "STOPPED", "APPLIED"})
+        self.assertEqual(run.call_count, 6)
+        for call, (command, project_id) in zip(run.call_args_list, commands):
+            env = call.kwargs["env"]
+            self.assertEqual(env["RELAY_GDRIVE_OAUTH_CLIENT_FILE"], str(drive_client_path))
+            self.assertNotIn("RELAY_GDRIVE_ACCESS_TOKEN", env)
+            argv = call.args[0]
+            self.assertIn(command, argv)
+            if project_id:
+                self.assertEqual(argv[-2:], ["--project-id", project_id])
+
+        # The accepted fixture mode still removes both OAuth environment inputs.
+        self.config_path.write_text(json.dumps({
+            "schemaVersion": 1, "registryPath": str(self.registry_path),
+            "detectorStatePath": str(self.detector_path), "notificationLedgerPath": str(self.ledger_path),
+            "providerFixturePath": str(self.worker_fixture_path),
+            "testSecrets": {ref: base64.b64encode(key).decode("ascii") for ref, key in KEYS.items()},
+            "intervalSeconds": 1, "stopTimeoutSeconds": 6,
+        }), encoding="utf-8")
+        fixture_result = subprocess.CompletedProcess([], 0, '{"result":"STOPPED"}', "")
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path),
+                                     "RELAY_GDRIVE_ACCESS_TOKEN": "synthetic-token-must-not-cross"}, clear=False), \
+                patch("arm_v2_dashboard.subprocess.run", return_value=fixture_result) as fixture_run:
+            _status_command(self.config_path, "status")
+        fixture_env = fixture_run.call_args.kwargs["env"]
+        self.assertNotIn("RELAY_GDRIVE_OAUTH_CLIENT_FILE", fixture_env)
+        self.assertNotIn("RELAY_GDRIVE_ACCESS_TOKEN", fixture_env)
 
     def test_display_name_edit_uses_real_tk_callback_and_preserves_transport_identity(self):
         app = self.open_app()

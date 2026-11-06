@@ -51,7 +51,12 @@ def _state_files(config):
 def _status_command(config_path: Path, command: str, timeout: float = 20.0, project_id: str | None = None):
     env = dict(os.environ)
     env.pop("RELAY_GDRIVE_ACCESS_TOKEN", None)
-    env.pop("RELAY_GDRIVE_OAUTH_CLIENT_FILE", None)
+    try:
+        config = arm_v2_userhost.load_config(Path(config_path))
+    except Exception:
+        raise DashboardError("host configuration is invalid") from None
+    if config.provider_mode == "fixture":
+        env.pop("RELAY_GDRIVE_OAUTH_CLIENT_FILE", None)
     try:
         args = [sys.executable, str(Path(__file__).with_name("arm_v2_userhost.py")),
                 "--config", str(config_path), command]
@@ -125,6 +130,7 @@ def dashboard_snapshot(config_path: Path):
             "events": event_counts[project["projectId"]],
         })
     return {
+        "providerMode": config.provider_mode,
         "projects": projects, "history": history[:100], "host": host,
         "pending": counts["pending"], "acked": counts["acked"],
         "queued": counts["queued"], "total": counts["total"],
@@ -133,12 +139,12 @@ def dashboard_snapshot(config_path: Path):
 
 
 class DashboardApp:
-    def __init__(self, root: tk.Tk, config_path: Path, folder_validation_fixture: Path):
+    def __init__(self, root: tk.Tk, config_path: Path, folder_validation_fixture: Path | None = None):
         if os.name != "nt":
             raise DashboardError("Windows dashboard requires Windows")
         self.root = root
         self.config_path = Path(config_path)
-        self.folder_validation_fixture = Path(folder_validation_fixture)
+        self.folder_validation_fixture = Path(folder_validation_fixture) if folder_validation_fixture else None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arm-dashboard")
         self.future = None
         self._future_kind = None
@@ -149,7 +155,8 @@ class DashboardApp:
         self._pending_control_watch = None
         self._auto_refresh_id = None
         self.status_text = tk.StringVar(value="Loading offline project status…")
-        self.notice_text = tk.StringVar(value="FIXTURE / OFFLINE ONLY — NOT LIVE DRIVE / APO")
+        self.mode_text = tk.StringVar(value="Provider mode: loading configuration…")
+        self.notice_text = tk.StringVar(value="Local host status and controls; no project contents are shown.")
         self.pending_text = tk.StringVar(value="Pending: —    Acknowledged: —")
         self.form = {key: tk.StringVar() for key in (
             "displayName", "projectId", "repository", "workspace", "rootUrl",
@@ -166,6 +173,7 @@ class DashboardApp:
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="Artifact Relay Manager", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(outer, textvariable=self.mode_text, font=("Segoe UI", 10, "bold")).pack(anchor="w")
         ttk.Label(outer, textvariable=self.notice_text, foreground="#9a3412",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(2, 8))
         controls = ttk.Frame(outer)
@@ -235,14 +243,20 @@ class DashboardApp:
                         ("workspace", "Local workspace (optional)"), ("rootUrl", "Existing Drive root URL"),
                         ("promptsId", "Architect_Prompts folder ID"), ("reportsId", "Executor_Reports folder ID"),
                         ("endpoint", "Loopback simulated APO endpoint"), ("secretRef", "Test secret reference"))
+        self.project_config_entries = []
         for row, (key, label) in enumerate(descriptions):
             ttk.Label(add, text=label).grid(row=row, column=0, sticky="w", pady=2)
-            ttk.Entry(add, textvariable=self.form[key], width=38).grid(row=row, column=1, sticky="ew", pady=2)
-        ttk.Label(add, text="Folder identity validation fixture loaded" if self.folder_validation_fixture.exists()
-                  else "Folder validation fixture unavailable", foreground="#475569").grid(
+            entry = ttk.Entry(add, textvariable=self.form[key], width=38)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            self.project_config_entries.append(entry)
+        self.folder_fixture_label = ttk.Label(add, text="Folder identity validation fixture loaded"
+                  if self.folder_validation_fixture and self.folder_validation_fixture.exists()
+                  else "Folder validation fixture unavailable", foreground="#475569")
+        self.folder_fixture_label.grid(
                       row=len(descriptions), column=0, columnspan=2, sticky="w", pady=(4, 0))
         add.columnconfigure(1, weight=1)
-        ttk.Button(add, text="Validate and Add Disabled Project", command=self.add_project).grid(
+        self.add_project_button = ttk.Button(add, text="Validate and Add Disabled Project", command=self.add_project)
+        self.add_project_button.grid(
             row=len(descriptions) + 1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Label(right, textvariable=self.notice_text, wraplength=340, foreground="#475569").pack(
             fill="x", pady=(10, 4))
@@ -364,7 +378,7 @@ class DashboardApp:
         if command == "start" and code == 0 and outcome == "STARTED":
             if payload.get("status") == "PAUSED":
                 return "Monitor started and remains PAUSED until explicit Resume."
-            return "Monitor started by the accepted M05 host."
+            return "Monitor started by UserHost in the configured provider mode."
         if command == "stop" and code == 0 and outcome == "STOPPED":
             return "Monitor stopped cleanly; local event state remains durable."
         if command in {"pause", "resume"} and code == 0 and outcome == "APPLIED":
@@ -384,6 +398,8 @@ class DashboardApp:
 
     def _render(self):
         if self.latest is None:
+            self.mode_text.set("Provider mode: unavailable")
+            self.root.title("Artifact Relay Manager — Local State Unavailable")
             self.status_text.set("ERROR — local state invalid")
             self.pending_text.set("Pending: —    Acknowledged: —")
             self.enable_button.configure(state="disabled")
@@ -394,8 +410,24 @@ class DashboardApp:
             self.resume_all_button.configure(state="disabled")
             self.pause_project_button.configure(state="disabled")
             self.resume_project_button.configure(state="disabled")
+            for button in (self.edit_button, self.remove_button, self.add_project_button):
+                button.configure(state="disabled")
+            for entry in self.project_config_entries:
+                entry.configure(state="disabled")
             return
         host = self.latest["host"]
+        drive_mode = self.latest.get("providerMode") == "drive"
+        self.root.title("Artifact Relay Manager — Drive Mode" if drive_mode
+                        else "Artifact Relay Manager — Offline Dashboard")
+        self.mode_text.set("Provider mode: Google Drive (read-only; protected session required)" if drive_mode
+                           else "Provider mode: fixture / offline")
+        if drive_mode:
+            self.folder_fixture_label.configure(
+                text="Drive mode: project changes disabled; folder validation is not bypassed")
+        elif self.folder_validation_fixture and self.folder_validation_fixture.is_file():
+            self.folder_fixture_label.configure(text="Folder identity validation fixture loaded")
+        else:
+            self.folder_fixture_label.configure(text="Folder validation fixture unavailable")
         watch = self._pending_control_watch
         if watch:
             applied = host.get("lastAppliedControl")
@@ -413,7 +445,8 @@ class DashboardApp:
                 self._pending_control_watch = None
         self.status_text.set(f"Monitor: {host.get('status', 'UNKNOWN')}  |  Cycle: {host.get('cycle', 0)}"
                              f"  |  Heartbeat: {host.get('heartbeatAt', '—')}")
-        self.pending_text.set(f"Pending: {self.latest['pending']}    Acknowledged: {self.latest['acked']}")
+        self.pending_text.set(f"Pending: {self.latest['pending']}    Acknowledged: {self.latest['acked']}"
+                              f"    Queued: {self.latest.get('queued', 0)}")
         current = {row["projectId"]: row for row in self.latest["projects"]}
         selected_project_id = self._selected_project()
         try:
@@ -458,9 +491,20 @@ class DashboardApp:
         selected_active = selected_project_id in current and active
         self.pause_project_button.configure(state="normal" if selected_active else "disabled")
         self.resume_project_button.configure(state="normal" if selected_active else "disabled")
+        if drive_mode:
+            self.add_project_button.configure(state="disabled")
+            for entry in self.project_config_entries:
+                entry.configure(state="disabled")
+        else:
+            fixture_available = bool(self.folder_validation_fixture and self.folder_validation_fixture.is_file())
+            self.add_project_button.configure(state="normal" if fixture_available else "disabled")
+            for entry in self.project_config_entries:
+                entry.configure(state="normal" if fixture_available else "disabled")
 
     def _write_details(self, project):
-        text = (f"Project: {project['displayName']} ({project['projectId']})\n"
+        mode = "Google Drive (read-only)" if self.latest.get("providerMode") == "drive" else "Fixture / offline"
+        text = (f"Provider mode: {mode}\n"
+                f"Project: {project['displayName']} ({project['projectId']})\n"
                 f"Repository: {project['repository'] or '—'}\n"
                 f"Enabled: {'Yes' if project['enabled'] else 'No'}\n"
                 f"Paused: {'Yes' if project['paused'] else 'No'}\n"
@@ -490,10 +534,13 @@ class DashboardApp:
         selected = self._selected_project()
         project = next((item for item in (self.latest or {}).get("projects", [])
                         if item["projectId"] == selected), None)
-        self.enable_button.configure(state="normal" if project and not project["enabled"] else "disabled")
-        self.disable_button.configure(state="normal" if project and project["enabled"] else "disabled")
-        self.edit_button.configure(state="normal" if project else "disabled")
-        self.remove_button.configure(state="normal" if project else "disabled")
+        fixture_available = bool(self.folder_validation_fixture and self.folder_validation_fixture.is_file())
+        editable = (self.latest is not None and self.latest.get("providerMode") != "drive"
+                    and fixture_available)
+        self.enable_button.configure(state="normal" if editable and project and not project["enabled"] else "disabled")
+        self.disable_button.configure(state="normal" if editable and project and project["enabled"] else "disabled")
+        self.edit_button.configure(state="normal" if editable and project else "disabled")
+        self.remove_button.configure(state="normal" if editable and project else "disabled")
 
     def _selected_project(self):
         selected = self.project_table.selection()
@@ -503,6 +550,8 @@ class DashboardApp:
         if self.latest is None:
             raise DashboardError("LOCAL_STATE_INVALID")
         config = arm_v2_userhost.load_config(self.config_path)
+        if config.provider_mode == "drive":
+            raise DashboardError("project configuration changes are unavailable in Drive mode")
         host = arm_v2_userhost.status(self.config_path)
         if host.get("status") != "STOPPED":
             raise DashboardError("stop the monitor before changing project identity")
@@ -513,10 +562,13 @@ class DashboardApp:
 
     def add_project(self):
         try:
-            registry = ProjectRegistry(arm_v2_userhost.load_config(self.config_path).registry_path)
+            config = arm_v2_userhost.load_config(self.config_path)
+            if config.provider_mode == "drive":
+                raise DashboardError("project configuration changes are unavailable in Drive mode")
+            registry = ProjectRegistry(config.registry_path)
             def save():
                 config = self._configuration_gate()
-                if not self.folder_validation_fixture.is_file():
+                if not self.folder_validation_fixture or not self.folder_validation_fixture.is_file():
                     raise DashboardError("folder validation fixture is unavailable")
                 provider = FakeDriveProvider.from_path(self.folder_validation_fixture)
                 endpoint = _loopback_endpoint(self.form["endpoint"].get().strip())
@@ -544,12 +596,17 @@ class DashboardApp:
             self.notice_text.set("Select a project first.")
             return
         try:
-            registry = ProjectRegistry(arm_v2_userhost.load_config(self.config_path).registry_path)
+            config = arm_v2_userhost.load_config(self.config_path)
+            if config.provider_mode == "drive":
+                raise DashboardError("project configuration changes are unavailable in Drive mode")
+            registry = ProjectRegistry(config.registry_path)
             def change():
                 if self.latest is None:
                     raise DashboardError("LOCAL_STATE_INVALID")
                 config = arm_v2_userhost.load_config(self.config_path)
                 _state_files(config)
+                if not self.folder_validation_fixture or not self.folder_validation_fixture.is_file():
+                    raise DashboardError("folder validation fixture is unavailable")
                 provider = FakeDriveProvider.from_path(self.folder_validation_fixture)
                 registry.validate_folder_projects(provider, project_id)
                 registry.set_folder_project_enabled(project_id, enabled)
@@ -562,6 +619,9 @@ class DashboardApp:
             self.notice_text.set(f"Project {action} rejected; local state or folder validation failed closed.")
 
     def edit_selected(self):
+        if self._drive_mode():
+            self.notice_text.set("Project configuration changes are disabled in Drive mode; folder validation is required.")
+            return
         project_id = self._selected_project()
         project = next((row for row in (self.latest or {}).get("projects", [])
                         if row["projectId"] == project_id), None)
@@ -594,6 +654,9 @@ class DashboardApp:
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=6)
 
     def remove_selected(self):
+        if self._drive_mode():
+            self.notice_text.set("Project configuration changes are disabled in Drive mode; folder validation is required.")
+            return
         project_id = self._selected_project()
         if not project_id:
             self.notice_text.set("Select a project first.")
@@ -643,13 +706,16 @@ class DashboardApp:
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 
+    def _drive_mode(self):
+        return self.latest is not None and self.latest.get("providerMode") == "drive"
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True,
                         help="existing M05 offline host configuration")
-    parser.add_argument("--folder-validation-fixture", type=Path, required=True,
-                        help="local M01 FakeDriveProvider folder identity fixture")
+    parser.add_argument("--folder-validation-fixture", type=Path,
+                        help="local M01 FakeDriveProvider folder identity fixture (fixture mode only)")
     args = parser.parse_args(argv)
     if os.name != "nt":
         print("Windows dashboard requires Windows", file=sys.stderr)
