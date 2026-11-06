@@ -12,7 +12,9 @@ import tkinter as tk
 import unittest
 from unittest.mock import patch
 
-from arm_v2_dashboard import DashboardApp, DashboardError, _loopback_endpoint, _status_command, dashboard_snapshot
+from arm_v2_dashboard import (DashboardApp, DashboardError, _drive_onboarding_transaction,
+                              _loopback_endpoint, _status_command, dashboard_snapshot)
+import arm_v2_userhost
 from arm_v2_userhost import status as host_status
 from project_folder_config import FakeDriveProvider
 from project_registry import ProjectRegistry, ProjectRegistryError
@@ -394,6 +396,93 @@ class DashboardTests(unittest.TestCase):
                 confirm.assert_not_called()
             self.assertEqual(self.registry_path.read_bytes(), before)
             self.assertEqual(app.latest["projects"][0]["projectId"], "project-a")
+
+    def test_drive_onboarding_validates_metadata_and_adds_new_project_disabled(self):
+        drive_client_path = self.configure_drive_mode_project()
+        fake = FakeDriveProvider(folder_fixture())
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                patch("urllib.request.urlopen", side_effect=AssertionError("offline test attempted a network request")):
+            app = self.open_app()
+            self.assertEqual(str(app.add_project_button.cget("state")), "normal")
+            self.assertTrue(all(str(entry.cget("state")) == "normal" for entry in app.project_config_entries))
+            for button in (app.enable_button, app.disable_button, app.edit_button, app.remove_button):
+                self.assertEqual(str(button.cget("state")), "disabled")
+            self.fill_project("project-c", "root-b", "http://127.0.0.1:49153/notify")
+            self.app.form["promptsId"].set("prompts-b")
+            self.app.form["reportsId"].set("reports-b")
+            self.app.form["secretRef"].set("test:project-b")
+            before = self.registry_path.read_bytes()
+            self.app.drive_provider_factory = lambda _registry_path: fake
+            self.app.add_project()
+            self.wait_idle()
+
+            document = ProjectRegistry(self.registry_path).load()
+            project = next(item for item in document["folderProjects"] if item["projectId"] == "project-c")
+            self.assertFalse(project["enabled"])
+            self.assertIn(b"project-a", before)
+            self.assertIn("validated", self.app.notice_text.get().lower())
+            self.assertEqual(self.app.latest["host"]["status"], "STOPPED")
+            self.assertEqual(self.app.latest["projects"][-1]["projectId"], "project-c")
+            self.assertEqual(self.app.latest["projects"][-1]["enabled"], False)
+            self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
+
+    def test_drive_onboarding_rejects_mismatch_duplicate_and_transport_history_without_write(self):
+        drive_client_path = self.configure_drive_mode_project()
+        values = {"displayName": "Project C", "projectId": "project-c", "repository": "owner/project-c",
+                  "workspace": "", "rootUrl": "https://drive.google.com/drive/folders/root-b",
+                  "promptsId": "wrong-prompts", "reportsId": "reports-b",
+                  "endpoint": "http://127.0.0.1:49153/notify", "secretRef": "test:project-b"}
+        before = self.registry_path.read_bytes()
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                patch("arm_v2_userhost.status", return_value={"status": "STOPPED"}):
+            with self.assertRaises(DashboardError):
+                _drive_onboarding_transaction(self.config_path, values,
+                    lambda _path: FakeDriveProvider(folder_fixture()))
+            self.assertEqual(self.registry_path.read_bytes(), before)
+
+            duplicate = dict(values, projectId="project-a", promptsId="prompts-b")
+            with self.assertRaises(DashboardError):
+                _drive_onboarding_transaction(self.config_path, duplicate,
+                    lambda _path: (_ for _ in ()).throw(AssertionError("duplicate must fail before provider access")))
+            self.assertEqual(self.registry_path.read_bytes(), before)
+
+            self.detector_path.write_text(json.dumps({"schemaVersion": 2, "folders": {}, "events": [{
+                "projectId": "project-a", "eventId": "m03-" + "a" * 64, "eventType": "PROMPT_CHANGED",
+                "changeKind": "ARRIVED", "fileId": "existing", "detectedAt": "2026-11-06T00:00:00Z"}],
+                "eventIdentities": {}, "ambiguous": []}), encoding="utf-8")
+            with self.assertRaises(DashboardError):
+                _drive_onboarding_transaction(self.config_path, values,
+                    lambda _path: (_ for _ in ()).throw(AssertionError("history must fail before provider access")))
+            self.assertEqual(self.registry_path.read_bytes(), before)
+
+    def test_drive_onboarding_refuses_active_userhost_and_concurrent_start_lock(self):
+        drive_client_path = self.configure_drive_mode_project()
+        values = {"displayName": "Project C", "projectId": "project-c", "repository": "owner/project-c",
+                  "workspace": "", "rootUrl": "https://drive.google.com/drive/folders/root-b",
+                  "promptsId": "prompts-b", "reportsId": "reports-b",
+                  "endpoint": "http://127.0.0.1:49153/notify", "secretRef": "test:project-b"}
+        before = self.registry_path.read_bytes()
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                patch("arm_v2_userhost.status", return_value={"status": "RUNNING"}):
+            with self.assertRaises(DashboardError):
+                _drive_onboarding_transaction(self.config_path, values,
+                    lambda _path: (_ for _ in ()).throw(AssertionError("running host must fail before provider access")))
+        self.assertEqual(self.registry_path.read_bytes(), before)
+
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            config = arm_v2_userhost.load_config(self.config_path)
+        config.control_dir.mkdir(parents=True, exist_ok=True)
+        held_start = arm_v2_userhost.SingleInstanceLock(config.start_lock_path)
+        self.assertTrue(held_start.acquire())
+        try:
+            with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                    patch("arm_v2_userhost.status", return_value={"status": "STOPPED"}):
+                with self.assertRaises(DashboardError):
+                    _drive_onboarding_transaction(self.config_path, values,
+                        lambda _path: (_ for _ in ()).throw(AssertionError("concurrent start must fail before provider access")))
+        finally:
+            held_start.release()
+        self.assertEqual(self.registry_path.read_bytes(), before)
 
     def test_userhost_controls_preserve_drive_client_path_and_strip_access_token(self):
         drive_client_path = self.configure_drive_mode_project()

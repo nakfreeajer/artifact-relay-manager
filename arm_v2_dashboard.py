@@ -48,6 +48,72 @@ def _state_files(config):
     return detector, ledger
 
 
+def _drive_onboarding_transaction(config_path: Path, values: dict, provider_factory=None):
+    """Validate one new Drive project and atomically register it disabled."""
+    try:
+        config = arm_v2_userhost.load_config(config_path)
+    except Exception:
+        raise DashboardError("host configuration is invalid") from None
+    if config.provider_mode != "drive":
+        raise DashboardError("Drive onboarding requires explicit Drive mode")
+
+    project_id = values["projectId"].strip()
+    endpoint = _loopback_endpoint(values["endpoint"].strip())
+    secret_ref = values["secretRef"].strip()
+    if not project_id or secret_ref not in config.test_secrets:
+        raise DashboardError("project identity or test receiver configuration is invalid")
+    registry = ProjectRegistry(config.registry_path)
+
+    def register():
+        # Re-read every gate while holding the same cross-window registry lock
+        # used for the final atomic update. The UserHost start lock prevents a
+        # second dashboard from starting a worker during the metadata check.
+        current = arm_v2_userhost.load_config(config_path)
+        if current.provider_mode != "drive":
+            raise DashboardError("Drive mode changed during project onboarding")
+        if arm_v2_userhost.status(config_path).get("status") != "STOPPED":
+            raise DashboardError("UserHost must be stopped before project onboarding")
+        start_lock = arm_v2_userhost.SingleInstanceLock(current.start_lock_path)
+        if not start_lock.acquire():
+            raise DashboardError("UserHost start or stop is already in progress")
+        try:
+            if arm_v2_userhost._probe_lock(current.worker_lock_path):
+                raise DashboardError("UserHost must be stopped before project onboarding")
+            detector, ledger = _state_files(current)
+            if detector["events"] or ledger["entries"]:
+                raise DashboardError("project onboarding is blocked after transport history exists")
+            document = registry.load()
+            if any(item["projectId"] == project_id
+                   for item in document["projects"] + document["folderProjects"]):
+                raise DashboardError("projectId is already registered")
+
+            factory = provider_factory or arm_v2_userhost.AuthenticatedDriveMetadataProvider
+            provider = factory(current.registry_path)
+            return registry.configure_folder_project(
+                project_id=project_id,
+                display_name=values["displayName"].strip(),
+                root_url=values["rootUrl"].strip(),
+                prompts_id=values["promptsId"].strip(),
+                reports_id=values["reportsId"].strip(),
+                endpoint=endpoint,
+                provider=provider,
+                repository=values["repository"].strip() or None,
+                workspace=values["workspace"].strip() or None,
+                secret_ref=secret_ref,
+                enabled=False,
+            )
+        finally:
+            start_lock.release()
+
+    try:
+        return registry.dashboard_write(register)
+    except (DashboardError, ProjectRegistryError):
+        raise
+    except Exception:
+        # Provider/authentication details can include private response data.
+        raise DashboardError("Drive project validation failed; registry was not changed") from None
+
+
 def _status_command(config_path: Path, command: str, timeout: float = 20.0, project_id: str | None = None):
     env = dict(os.environ)
     env.pop("RELAY_GDRIVE_ACCESS_TOKEN", None)
@@ -139,12 +205,14 @@ def dashboard_snapshot(config_path: Path):
 
 
 class DashboardApp:
-    def __init__(self, root: tk.Tk, config_path: Path, folder_validation_fixture: Path | None = None):
+    def __init__(self, root: tk.Tk, config_path: Path, folder_validation_fixture: Path | None = None,
+                 *, drive_provider_factory=None):
         if os.name != "nt":
             raise DashboardError("Windows dashboard requires Windows")
         self.root = root
         self.config_path = Path(config_path)
         self.folder_validation_fixture = Path(folder_validation_fixture) if folder_validation_fixture else None
+        self.drive_provider_factory = drive_provider_factory
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arm-dashboard")
         self.future = None
         self._future_kind = None
@@ -260,9 +328,13 @@ class DashboardApp:
             row=len(descriptions) + 1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Label(right, textvariable=self.notice_text, wraplength=340, foreground="#475569").pack(
             fill="x", pady=(10, 4))
-        ttk.Label(right, text="No Drive or Orchestrator connection is made by Refresh.\n"
-                  "Project content and local secret values are never shown.", wraplength=340).pack(anchor="w")
+        self.mode_help = ttk.Label(right, text="No Drive or Orchestrator connection is made by Refresh.\n"
+                  "Project content and local secret values are never shown.", wraplength=340)
+        self.mode_help.pack(anchor="w")
         self.project_table.bind("<<TreeviewSelect>>", self._show_selected)
+        self.add_project_button.configure(state="disabled")
+        for entry in self.project_config_entries:
+            entry.configure(state="disabled")
 
     def _set_controls_busy(self, busy):
         state = "disabled" if busy else "normal"
@@ -272,6 +344,9 @@ class DashboardApp:
             button.configure(state=state)
         for button in (self.enable_button, self.disable_button, self.edit_button, self.remove_button):
             button.configure(state=state)
+        self.add_project_button.configure(state=state)
+        for entry in self.project_config_entries:
+            entry.configure(state=state)
 
     def _queue_refresh(self):
         if self.future is not None:
@@ -329,10 +404,15 @@ class DashboardApp:
         future_kind = self._future_kind
         self.future = None
         self._future_kind = None
-        if future_kind == "control":
+        if future_kind in {"control", "onboarding"}:
             self._set_controls_busy(False)
         try:
             value = future.result()
+            if future_kind == "onboarding":
+                self.last_error = None
+                self.notice_text.set("Drive folders validated; project added disabled. The UserHost was not started.")
+                self._queue_refresh()
+                return
             if isinstance(value, tuple):
                 code, payload = value
                 command = getattr(self, "_pending_command", "control")
@@ -355,6 +435,11 @@ class DashboardApp:
                 self.latest = value
                 self.last_error = None
         except Exception:
+            if future_kind == "onboarding":
+                self.last_error = "PROJECT_ONBOARDING_REJECTED"
+                self.notice_text.set("Project rejected; registry was not changed. Verify identity, stopped host, history, and folder access.")
+                self._render()
+                return
             self.latest = None
             self.last_error = "LOCAL_STATE_INVALID"
             self.notice_text.set("Local configuration or durable state is invalid; no action was taken.")
@@ -423,11 +508,20 @@ class DashboardApp:
                            else "Provider mode: fixture / offline")
         if drive_mode:
             self.folder_fixture_label.configure(
-                text="Drive mode: project changes disabled; folder validation is not bypassed")
+                text="Drive onboarding validates the existing root and exact direct-child folders using read-only metadata")
+            self.add_project_button.configure(text="Validate on Drive and Add Disabled Project")
+            self.mode_help.configure(text="Adding a Drive project performs read-only Google Drive metadata checks.\n"
+                                     "Refresh remains local-only; project events go only to the configured endpoint.")
         elif self.folder_validation_fixture and self.folder_validation_fixture.is_file():
             self.folder_fixture_label.configure(text="Folder identity validation fixture loaded")
+            self.add_project_button.configure(text="Validate and Add Disabled Project")
+            self.mode_help.configure(text="No Drive or Orchestrator connection is made by Refresh.\n"
+                                     "Project content and local secret values are never shown.")
         else:
             self.folder_fixture_label.configure(text="Folder validation fixture unavailable")
+            self.add_project_button.configure(text="Validate and Add Disabled Project")
+            self.mode_help.configure(text="No Drive or Orchestrator connection is made by Refresh.\n"
+                                     "Project content and local secret values are never shown.")
         watch = self._pending_control_watch
         if watch:
             applied = host.get("lastAppliedControl")
@@ -492,9 +586,11 @@ class DashboardApp:
         self.pause_project_button.configure(state="normal" if selected_active else "disabled")
         self.resume_project_button.configure(state="normal" if selected_active else "disabled")
         if drive_mode:
-            self.add_project_button.configure(state="disabled")
+            can_add = host.get("status") == "STOPPED" and not self.latest["hasEventHistory"]
+            state = "normal" if can_add else "disabled"
+            self.add_project_button.configure(state=state)
             for entry in self.project_config_entries:
-                entry.configure(state="disabled")
+                entry.configure(state=state)
         else:
             fixture_available = bool(self.folder_validation_fixture and self.folder_validation_fixture.is_file())
             self.add_project_button.configure(state="normal" if fixture_available else "disabled")
@@ -564,7 +660,18 @@ class DashboardApp:
         try:
             config = arm_v2_userhost.load_config(self.config_path)
             if config.provider_mode == "drive":
-                raise DashboardError("project configuration changes are unavailable in Drive mode")
+                if self.latest is None:
+                    raise DashboardError("local state is unavailable")
+                if self.future is not None:
+                    raise DashboardError("another dashboard operation is active")
+                values = {key: variable.get() for key, variable in self.form.items()}
+                self._future_kind = "onboarding"
+                self._set_controls_busy(True)
+                self.notice_text.set("Validating the existing Drive folders with read-only metadata…")
+                self.future = self.executor.submit(
+                    _drive_onboarding_transaction, self.config_path, values, self.drive_provider_factory)
+                self.root.after(50, self._poll_future)
+                return
             registry = ProjectRegistry(config.registry_path)
             def save():
                 config = self._configuration_gate()
