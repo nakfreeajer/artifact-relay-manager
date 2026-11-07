@@ -117,6 +117,111 @@ def _drive_onboarding_transaction(config_path: Path, values: dict, provider_fact
         raise DashboardError("Drive project validation failed; registry was not changed") from None
 
 
+def _validate_drive_control_state(config, document):
+    """Validate local state bindings before changing an existing Drive project."""
+    detector, ledger = _state_files(config)
+    projects = {item["projectId"]: item for item in document["folderProjects"]}
+    bindings = {}
+    for project in document["folderProjects"]:
+        bindings[(project["projectId"], project["architectPromptsFolderId"])] = "PROMPT_CHANGED"
+        bindings[(project["projectId"], project["executorReportsFolderId"])] = "REPORT_CHANGED"
+    if any((item["projectId"], item["folderId"]) not in bindings
+           or bindings[(item["projectId"], item["folderId"])] != item["eventType"]
+           for item in detector["folders"].values()):
+        raise DashboardError("local detector state does not match registered projects")
+    if any((event["projectId"], event["folderId"]) not in bindings
+           or bindings[(event["projectId"], event["folderId"])] != event["eventType"]
+           for event in detector["events"]):
+        raise DashboardError("local detector state does not match registered projects")
+    if any((item["projectId"], item["folderId"]) not in bindings
+           for item in detector["ambiguous"]):
+        raise DashboardError("local detector state does not match registered projects")
+
+    # status() verifies event-to-ledger bindings and persisted ACK signatures;
+    # it reads local files only and does not contact the configured endpoint.
+    sender = arm_notification.NotificationSender(
+        config.registry_path, config.detector_path, config.ledger_path,
+        secret_resolver=lambda ref: config.test_secrets[ref])
+    sender.status()
+    config.pause_store.load(list(projects))
+    return detector, ledger
+
+
+def _drive_project_enablement_transaction(config_path: Path, project_id: str, enabled: bool,
+                                          provider_factory=None):
+    """Change one Drive project's eligibility while the host is stopped.
+
+    Enabling performs the canonical metadata-only folder identity validation.
+    Disabling validates local durable state and does not require Drive access.
+    """
+    if not isinstance(project_id, str) or not project_id or type(enabled) is not bool:
+        raise DashboardError("project selection or enable state is invalid")
+    try:
+        config = arm_v2_userhost.load_config(Path(config_path))
+    except Exception:
+        raise DashboardError("host configuration is invalid") from None
+    if config.provider_mode != "drive":
+        raise DashboardError("Drive project activation requires explicit Drive mode")
+    registry = ProjectRegistry(config.registry_path)
+
+    def change():
+        current = arm_v2_userhost.load_config(Path(config_path))
+        if current.provider_mode != "drive":
+            raise DashboardError("Drive mode changed during project activation")
+        if arm_v2_userhost.status(Path(config_path)).get("status") != "STOPPED":
+            raise DashboardError("UserHost must be stopped before changing project activation")
+
+        # UserHost.start() takes this lock before spawning. Holding it across
+        # validation and the atomic registry write prevents a concurrent start.
+        start_lock = arm_v2_userhost.SingleInstanceLock(current.start_lock_path)
+        if not start_lock.acquire():
+            raise DashboardError("UserHost start or stop is already in progress")
+        try:
+            if arm_v2_userhost._probe_lock(current.worker_lock_path):
+                raise DashboardError("UserHost must be stopped before changing project activation")
+            document = registry.load()
+            project = next((item for item in document["folderProjects"]
+                            if item["projectId"] == project_id), None)
+            if project is None:
+                raise DashboardError("selected project is no longer registered")
+            _validate_drive_control_state(current, document)
+            if type(project.get("enabled")) is not bool:
+                raise DashboardError("selected project configuration is invalid")
+            if project["enabled"] == enabled:
+                return {"projectId": project_id, "enabled": enabled, "changed": False}
+
+            if enabled:
+                factory = provider_factory or arm_v2_userhost.AuthenticatedDriveMetadataProvider
+                provider = factory(current.registry_path)
+                validated = registry.validate_folder_projects(provider, project_id)
+                if len(validated) != 1:
+                    raise DashboardError("selected project folder identity could not be verified")
+                verified = validated[0]
+                identity_fields = ("projectId", "driveRootId", "driveRootUrl",
+                    "architectPromptsFolderId", "architectPromptsFolderUrl",
+                    "executorReportsFolderId", "executorReportsFolderUrl", "orchestratorEndpoint")
+                if any(verified.get(field) != project.get(field) for field in identity_fields):
+                    raise DashboardError("selected project folder identity changed during validation")
+
+            # No detector, notification, ACK, or pause files are written here.
+            # The registry writer atomically changes only this project's flag.
+            updated = registry.set_folder_project_enabled(project_id, enabled)
+            if len(updated["folderProjects"]) != len(document["folderProjects"]):
+                raise DashboardError("project registry changed during activation")
+            return {"projectId": project_id, "enabled": enabled, "changed": True}
+        finally:
+            start_lock.release()
+
+    try:
+        return registry.dashboard_write(change)
+    except DashboardError:
+        raise
+    except Exception:
+        # Validation and authentication exceptions can contain private provider
+        # details; expose only a bounded operator message.
+        raise DashboardError("Drive project activation failed closed; no state was discarded") from None
+
+
 def _status_command(config_path: Path, command: str, timeout: float = 20.0, project_id: str | None = None):
     env = dict(os.environ)
     env.pop("RELAY_GDRIVE_ACCESS_TOKEN", None)
@@ -411,6 +516,8 @@ class DashboardApp:
             button.configure(state=state)
         self.add_project_button.configure(state=state)
         self._set_project_form_state(busy)
+        if not busy:
+            self._update_project_controls()
 
     def _queue_refresh(self):
         if self.future is not None:
@@ -468,7 +575,7 @@ class DashboardApp:
         future_kind = self._future_kind
         self.future = None
         self._future_kind = None
-        if future_kind in {"control", "onboarding"}:
+        if future_kind in {"control", "onboarding", "enablement"}:
             self._set_controls_busy(False)
         try:
             value = future.result()
@@ -476,6 +583,17 @@ class DashboardApp:
                 self.last_error = None
                 self._show_discovered_folders(value)
                 self.notice_text.set("Drive folders validated; project added disabled. The UserHost was not started.")
+                self._queue_refresh()
+                return
+            if future_kind == "enablement":
+                self.last_error = None
+                if value["changed"]:
+                    self.notice_text.set(
+                        "Project enabled after Drive folder revalidation; the UserHost remains stopped."
+                        if value["enabled"] else
+                        "Project disabled; detector, notification, ACK, pending, and pause state were preserved.")
+                else:
+                    self.notice_text.set("Project already has the requested activation state; no change was made.")
                 self._queue_refresh()
                 return
             if isinstance(value, tuple):
@@ -504,6 +622,12 @@ class DashboardApp:
                 self.last_error = "PROJECT_ONBOARDING_REJECTED"
                 self.notice_text.set("Project rejected; registry was not changed. Verify identity, stopped host, history, and folder access.")
                 self._render()
+                return
+            if future_kind == "enablement":
+                self.last_error = "PROJECT_ENABLEMENT_REJECTED"
+                self.notice_text.set("Project activation rejected by a required safety check; no durable state was discarded.")
+                self._render()
+                self._queue_refresh()
                 return
             self.latest = None
             self.last_error = "LOCAL_STATE_INVALID"
@@ -695,10 +819,13 @@ class DashboardApp:
         project = next((item for item in (self.latest or {}).get("projects", [])
                         if item["projectId"] == selected), None)
         fixture_available = bool(self.folder_validation_fixture and self.folder_validation_fixture.is_file())
-        editable = (self.latest is not None and self.latest.get("providerMode") != "drive"
-                    and fixture_available)
-        self.enable_button.configure(state="normal" if editable and project and not project["enabled"] else "disabled")
-        self.disable_button.configure(state="normal" if editable and project and project["enabled"] else "disabled")
+        drive_mode = self.latest is not None and self.latest.get("providerMode") == "drive"
+        host_stopped = bool(self.latest and self.latest.get("host", {}).get("status") == "STOPPED")
+        can_toggle = bool(project and ((drive_mode and host_stopped)
+                                       or (not drive_mode and fixture_available)))
+        editable = (self.latest is not None and not drive_mode and fixture_available)
+        self.enable_button.configure(state="normal" if can_toggle and not project["enabled"] else "disabled")
+        self.disable_button.configure(state="normal" if can_toggle and project["enabled"] else "disabled")
         self.edit_button.configure(state="normal" if editable and project else "disabled")
         self.remove_button.configure(state="normal" if editable and project else "disabled")
 
@@ -769,7 +896,16 @@ class DashboardApp:
         try:
             config = arm_v2_userhost.load_config(self.config_path)
             if config.provider_mode == "drive":
-                raise DashboardError("project configuration changes are unavailable in Drive mode")
+                if self.future is not None:
+                    raise DashboardError("another dashboard operation is active")
+                self._future_kind = "enablement"
+                self._set_controls_busy(True)
+                self.notice_text.set("Revalidating Drive folder identity before enabling project…" if enabled
+                                     else "Checking stopped host and local state before disabling project…")
+                self.future = self.executor.submit(_drive_project_enablement_transaction,
+                    self.config_path, project_id, enabled, self.drive_provider_factory)
+                self.root.after(50, self._poll_future)
+                return
             registry = ProjectRegistry(config.registry_path)
             def change():
                 if self.latest is None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -12,10 +14,14 @@ import tkinter as tk
 import unittest
 from unittest.mock import patch
 
+import arm_notification
+import drive_change_detector
 from arm_v2_dashboard import (DashboardApp, DashboardError, _drive_onboarding_transaction,
+                              _drive_project_enablement_transaction,
                               _loopback_endpoint, _status_command, dashboard_snapshot)
 import arm_v2_userhost
 from arm_v2_userhost import status as host_status
+from drive_change_detector import DriveChangeDetector, FixtureProvider
 from project_folder_config import FakeDriveProvider
 from project_registry import ProjectRegistry, ProjectRegistryError
 from tests.test_arm_foreground import KEYS, folder_fixture, snapshots
@@ -84,13 +90,13 @@ class DashboardTests(unittest.TestCase):
         self.wait_idle()
         return self.app.latest
 
-    def configure_drive_mode_project(self):
+    def configure_drive_mode_project(self, *, enabled=True):
         registry = ProjectRegistry(self.registry_path)
         registry.configure_folder_project(project_id="project-a", display_name="Project A",
             root_url="https://drive.google.com/drive/folders/root-a", prompts_id="prompts-a",
             reports_id="reports-a", endpoint="http://127.0.0.1:49152/notify",
             provider=FakeDriveProvider(folder_fixture()), repository="owner/project-a",
-            secret_ref="test:project-a", enabled=True)
+            secret_ref="test:project-a", enabled=enabled)
         drive_client_path = self.root / "synthetic-client-location.json"
         # The dashboard preflight checks the configured client path only; this file is never read.
         drive_client_path.write_text("{}", encoding="utf-8")
@@ -102,6 +108,45 @@ class DashboardTests(unittest.TestCase):
             "intervalSeconds": 1, "stopTimeoutSeconds": 6,
         }), encoding="utf-8")
         return drive_client_path
+
+    def seed_drive_history(self, drive_client_path):
+        """Create valid synthetic detector, pending/ACK, and pause state offline."""
+        registry = ProjectRegistry(self.registry_path)
+        provider = FakeDriveProvider(folder_fixture())
+        registry.configure_folder_project(project_id="project-b", display_name="Project B",
+            root_url="https://drive.google.com/drive/folders/root-b", prompts_id="prompts-b",
+            reports_id="reports-b", endpoint="http://127.0.0.1:49153/notify",
+            provider=provider, secret_ref="test:project-b", enabled=False)
+        detector = DriveChangeDetector(self.registry_path, self.detector_path)
+        detector.scan(FixtureProvider(snapshots()), project_ids=("project-a",))
+        detector.scan(FixtureProvider(snapshots(changed=True, arrivals=True)), project_ids=("project-a",))
+        detector.scan(FixtureProvider(snapshots(changed=True, arrivals=True)), project_ids=("project-a",))
+        state = drive_change_detector._validate_state(drive_change_detector._json_load(self.detector_path))
+        events = state["events"]
+        self.assertGreaterEqual(len(events), 2)
+        entries = {}
+        project = registry.show_folder_project("project-a")
+        for index, event in enumerate(events):
+            payload = arm_notification._event_payload(event)
+            entry = {"eventId": event["eventId"], "projectId": event["projectId"],
+                     "destination": project["orchestratorEndpoint"], "payload": payload,
+                     "status": "PENDING", "attemptCount": 1, "nextAttemptAt": 99.0,
+                     "lastErrorClass": "HTTP_5XX", "firstSeenAt": 1.0, "updatedAt": 2.0,
+                     "receipt": None}
+            if index == 0:
+                proof = {"projectId": event["projectId"], "eventId": event["eventId"]}
+                signature = hmac.new(KEYS["test:project-a"], arm_notification._canonical_json(proof),
+                                     hashlib.sha256).hexdigest()
+                entry.update({"status": "ACKED", "nextAttemptAt": None, "lastErrorClass": None,
+                    "receipt": {"projectId": event["projectId"], "eventId": event["eventId"],
+                                "destination": project["orchestratorEndpoint"],
+                                "receivedAt": "2026-11-07T00:00:00Z", "signature": signature}})
+            entries[event["eventId"]] = entry
+        self.ledger_path.write_text(json.dumps({"schemaVersion": 1, "entries": entries}), encoding="utf-8")
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            config = arm_v2_userhost.load_config(self.config_path)
+        config.pause_store.request("PAUSE_PROJECT", "project-a", ["project-a", "project-b"], "1" * 32)
+        return events
 
     def test_endpoint_boundary_accepts_loopback_only(self):
         for endpoint in ("http://localhost:8080/notify", "http://127.0.0.1:49152/notify",
@@ -391,6 +436,7 @@ class DashboardTests(unittest.TestCase):
             self.tk_root.update()
             app.add_project()
             app._set_enabled(False)
+            self.wait_idle()
             with patch("arm_v2_dashboard.messagebox.askyesno") as confirm:
                 app.edit_selected()
                 app.remove_selected()
@@ -535,6 +581,159 @@ class DashboardTests(unittest.TestCase):
         finally:
             held_start.release()
         self.assertEqual(self.registry_path.read_bytes(), before)
+
+    def test_drive_dashboard_enable_revalidates_and_never_starts_userhost(self):
+        drive_client_path = self.configure_drive_mode_project(enabled=False)
+        calls = []
+
+        class RecordingProvider:
+            def __init__(self, data):
+                self.provider = FakeDriveProvider(data)
+
+            def folder(self, folder_id):
+                calls.append(("folder", folder_id))
+                return self.provider.folder(folder_id)
+
+            def children(self, folder_id):
+                calls.append(("children", folder_id))
+                return self.provider.children(folder_id)
+
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            self.tk_root = tk.Tk()
+            self.tk_root.withdraw()
+            self.app = DashboardApp(self.tk_root, self.config_path, drive_provider_factory=
+                lambda _path: RecordingProvider(folder_fixture()))
+            self.wait_idle()
+            self.app.project_table.selection_set("project-a")
+            self.tk_root.update()
+            self.assertEqual(str(self.app.enable_button.cget("state")), "normal")
+            self.assertEqual(str(self.app.disable_button.cget("state")), "disabled")
+            with patch("arm_v2_userhost.start") as start_worker:
+                self.app.enable_button.invoke()
+                self.wait_idle()
+                start_worker.assert_not_called()
+            self.assertTrue(ProjectRegistry(self.registry_path).show_folder_project("project-a")["enabled"])
+            self.assertTrue(calls)
+            self.assertEqual(calls[0], ("folder", "root-a"))
+            self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
+            self.assertIn("UserHost remains stopped", self.app.notice_text.get())
+            self.assertEqual(str(self.app.disable_button.cget("state")), "normal")
+            self.assertEqual(str(self.app.enable_button.cget("state")), "disabled")
+
+    def test_drive_enable_rejects_missing_ambiguous_moved_or_mismatched_identity(self):
+        drive_client_path = self.configure_drive_mode_project(enabled=False)
+        registry_before = self.registry_path.read_bytes()
+        fixtures = []
+        missing = folder_fixture()
+        missing["items"] = [item for item in missing["items"] if item["id"] != "prompts-a"]
+        fixtures.append(("missing", missing))
+        ambiguous = folder_fixture()
+        ambiguous["items"].append(dict(next(item for item in ambiguous["items"]
+                                            if item["id"] == "prompts-a"), id="prompts-a-copy"))
+        fixtures.append(("ambiguous", ambiguous))
+        moved = folder_fixture()
+        next(item for item in moved["items"] if item["id"] == "reports-a")["parents"] = ["root-b"]
+        fixtures.append(("moved", moved))
+        mismatched = folder_fixture()
+        next(item for item in mismatched["items"] if item["id"] == "prompts-a")["id"] = "prompts-other"
+        fixtures.append(("mismatched", mismatched))
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            for name, fixture in fixtures:
+                with self.subTest(name=name), self.assertRaises(DashboardError):
+                    _drive_project_enablement_transaction(self.config_path, "project-a", True,
+                        lambda _path, data=fixture: FakeDriveProvider(data))
+                self.assertEqual(self.registry_path.read_bytes(), registry_before)
+
+    def test_drive_enable_fails_closed_for_active_host_and_competing_locks(self):
+        drive_client_path = self.configure_drive_mode_project(enabled=False)
+        before = self.registry_path.read_bytes()
+        factory = lambda _path: (_ for _ in ()).throw(AssertionError("provider must not be created"))
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                patch("arm_v2_userhost.status", return_value={"status": "RUNNING"}):
+            with self.assertRaises(DashboardError):
+                _drive_project_enablement_transaction(self.config_path, "project-a", True, factory)
+        self.assertEqual(self.registry_path.read_bytes(), before)
+
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            config = arm_v2_userhost.load_config(self.config_path)
+        config.control_dir.mkdir(parents=True, exist_ok=True)
+        for lock_path in (config.start_lock_path, config.worker_lock_path):
+            lock = arm_v2_userhost.SingleInstanceLock(lock_path)
+            self.assertTrue(lock.acquire())
+            try:
+                with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                        patch("arm_v2_userhost.status", return_value={"status": "STOPPED"}):
+                    with self.assertRaises(DashboardError):
+                        _drive_project_enablement_transaction(self.config_path, "project-a", True, factory)
+            finally:
+                lock.release()
+            self.assertEqual(self.registry_path.read_bytes(), before)
+
+    def test_drive_disable_and_reenable_preserve_pending_acked_and_pause_state(self):
+        drive_client_path = self.configure_drive_mode_project(enabled=True)
+        events = self.seed_drive_history(drive_client_path)
+        registry = ProjectRegistry(self.registry_path)
+        before_registry = registry.load()
+        detector_bytes = self.detector_path.read_bytes()
+        ledger_bytes = self.ledger_path.read_bytes()
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            config = arm_v2_userhost.load_config(self.config_path)
+        pause_bytes = config.pause_store.path.read_bytes()
+        ledger_before = arm_notification._read_ledger(self.ledger_path)
+        self.assertEqual({item["status"] for item in ledger_before["entries"].values()}, {"ACKED", "PENDING"})
+
+        def forbidden_provider(_path):
+            raise AssertionError("disable and offline state preservation must not access Drive")
+
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            disabled = _drive_project_enablement_transaction(self.config_path, "project-a", False,
+                                                               forbidden_provider)
+            self.assertFalse(disabled["enabled"])
+            self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
+            snapshot = dashboard_snapshot(self.config_path)
+            self.assertFalse(next(item for item in snapshot["projects"]
+                                  if item["projectId"] == "project-a")["enabled"])
+
+            def valid_provider(_path):
+                return FakeDriveProvider(folder_fixture())
+            enabled = _drive_project_enablement_transaction(self.config_path, "project-a", True,
+                                                              valid_provider)
+            self.assertTrue(enabled["enabled"])
+            self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
+            snapshot = dashboard_snapshot(self.config_path)
+            self.assertTrue(next(item for item in snapshot["projects"]
+                                 if item["projectId"] == "project-a")["enabled"])
+            _status_code, fresh_status = _status_command(self.config_path, "status")
+            self.assertEqual(fresh_status["status"], "STOPPED")
+
+        after_registry = registry.load()
+        self.assertEqual([item for item in after_registry["projects"]], before_registry["projects"])
+        before_by_id = {item["projectId"]: item for item in before_registry["folderProjects"]}
+        after_by_id = {item["projectId"]: item for item in after_registry["folderProjects"]}
+        for project_id in before_by_id:
+            if project_id == "project-a":
+                self.assertEqual({k: v for k, v in after_by_id[project_id].items() if k != "enabled"},
+                                 {k: v for k, v in before_by_id[project_id].items() if k != "enabled"})
+            else:
+                self.assertEqual(after_by_id[project_id], before_by_id[project_id])
+        self.assertEqual(self.detector_path.read_bytes(), detector_bytes)
+        self.assertEqual(self.ledger_path.read_bytes(), ledger_bytes)
+        self.assertEqual(config.pause_store.path.read_bytes(), pause_bytes)
+        self.assertEqual({item["eventId"] for item in drive_change_detector._json_load(self.detector_path)["events"]},
+                         {item["eventId"] for item in events})
+        self.assertEqual({item["status"] for item in arm_notification._read_ledger(self.ledger_path)["entries"].values()},
+                         {"ACKED", "PENDING"})
+
+    def test_drive_enable_and_disable_reject_corrupt_local_state_without_registry_change(self):
+        drive_client_path = self.configure_drive_mode_project(enabled=True)
+        before = self.registry_path.read_bytes()
+        self.ledger_path.write_text("{corrupt", encoding="utf-8")
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False):
+            for desired in (False, True):
+                with self.subTest(enabled=desired), self.assertRaises(DashboardError):
+                    _drive_project_enablement_transaction(self.config_path, "project-a", desired,
+                        lambda _path: FakeDriveProvider(folder_fixture()))
+                self.assertEqual(self.registry_path.read_bytes(), before)
 
     def test_userhost_controls_preserve_drive_client_path_and_strip_access_token(self):
         drive_client_path = self.configure_drive_mode_project()
