@@ -12,6 +12,7 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, ttk
 from urllib.parse import urlsplit
+import webbrowser
 
 import arm_notification
 import arm_v2_userhost
@@ -93,8 +94,10 @@ def _drive_onboarding_transaction(config_path: Path, values: dict, provider_fact
                 project_id=project_id,
                 display_name=values["displayName"].strip(),
                 root_url=values["rootUrl"].strip(),
-                prompts_id=values["promptsId"].strip(),
-                reports_id=values["reportsId"].strip(),
+                # The operator supplies one existing root link. The canonical
+                # builder discovers and validates both named direct children.
+                prompts_id=None,
+                reports_id=None,
                 endpoint=endpoint,
                 provider=provider,
                 repository=values["repository"].strip() or None,
@@ -222,6 +225,7 @@ class DashboardApp:
         self.last_error = None
         self._pending_control_watch = None
         self._auto_refresh_id = None
+        self._discovered_root_url = None
         self.status_text = tk.StringVar(value="Loading offline project status…")
         self.mode_text = tk.StringVar(value="Provider mode: loading configuration…")
         self.notice_text = tk.StringVar(value="Local host status and controls; no project contents are shown.")
@@ -229,6 +233,7 @@ class DashboardApp:
         self.form = {key: tk.StringVar() for key in (
             "displayName", "projectId", "repository", "workspace", "rootUrl",
             "promptsId", "reportsId", "endpoint", "secretRef")}
+        self.form["rootUrl"].trace_add("write", self._root_link_changed)
         self.root.title("Artifact Relay Manager — Offline Dashboard")
         self.root.geometry("1200x820")
         self.root.minsize(950, 640)
@@ -309,23 +314,34 @@ class DashboardApp:
         descriptions = (("displayName", "Display name"), ("projectId", "Project ID"),
                         ("repository", "Repository / workspace identity (optional)"),
                         ("workspace", "Local workspace (optional)"), ("rootUrl", "Existing Drive root URL"),
-                        ("promptsId", "Architect_Prompts folder ID"), ("reportsId", "Executor_Reports folder ID"),
+                        ("promptsId", "Architect_Prompts folder ID (discovered)"),
+                        ("reportsId", "Executor_Reports folder ID (discovered)"),
                         ("endpoint", "Loopback simulated APO endpoint"), ("secretRef", "Test secret reference"))
         self.project_config_entries = []
+        self._project_entries = {}
+        self._project_labels = {}
+        self.open_drive_button = ttk.Button(add, text="Open Google Drive", command=self._open_google_drive)
+        self.open_drive_button.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(add, text="Opens separately; not an embedded picker.").grid(
+            row=0, column=1, columnspan=2, sticky="w", padx=(6, 0), pady=(0, 4))
         for row, (key, label) in enumerate(descriptions):
-            ttk.Label(add, text=label).grid(row=row, column=0, sticky="w", pady=2)
+            row += 1
+            label_widget = ttk.Label(add, text=label)
+            label_widget.grid(row=row, column=0, sticky="w", pady=2)
             entry = ttk.Entry(add, textvariable=self.form[key], width=38)
             entry.grid(row=row, column=1, sticky="ew", pady=2)
+            self._project_entries[key] = entry
+            self._project_labels[key] = label_widget
             self.project_config_entries.append(entry)
         self.folder_fixture_label = ttk.Label(add, text="Folder identity validation fixture loaded"
                   if self.folder_validation_fixture and self.folder_validation_fixture.exists()
                   else "Folder validation fixture unavailable", foreground="#475569")
         self.folder_fixture_label.grid(
-                      row=len(descriptions), column=0, columnspan=2, sticky="w", pady=(4, 0))
+                      row=len(descriptions) + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
         add.columnconfigure(1, weight=1)
         self.add_project_button = ttk.Button(add, text="Validate and Add Disabled Project", command=self.add_project)
         self.add_project_button.grid(
-            row=len(descriptions) + 1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            row=len(descriptions) + 2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Label(right, textvariable=self.notice_text, wraplength=340, foreground="#475569").pack(
             fill="x", pady=(10, 4))
         self.mode_help = ttk.Label(right, text="No Drive or Orchestrator connection is made by Refresh.\n"
@@ -333,8 +349,57 @@ class DashboardApp:
         self.mode_help.pack(anchor="w")
         self.project_table.bind("<<TreeviewSelect>>", self._show_selected)
         self.add_project_button.configure(state="disabled")
+        self.open_drive_button.configure(state="disabled")
         for entry in self.project_config_entries:
             entry.configure(state="disabled")
+
+    def _root_link_changed(self, *_args):
+        if self._discovered_root_url is None:
+            return
+        if self.form["rootUrl"].get().strip() != self._discovered_root_url:
+            self._discovered_root_url = None
+            self.form["promptsId"].set("")
+            self.form["reportsId"].set("")
+            if hasattr(self, "notice_text"):
+                self.notice_text.set("Root link changed; folder IDs cleared. Validate to discover the direct-child folders again.")
+
+    def _show_discovered_folders(self, project):
+        self._discovered_root_url = project["driveRootUrl"]
+        self.form["promptsId"].set(project["architectPromptsFolderId"])
+        self.form["reportsId"].set(project["executorReportsFolderId"])
+
+    @staticmethod
+    def _open_google_drive_url():
+        return webbrowser.open("https://drive.google.com/drive/my-drive", new=2)
+
+    def _open_google_drive(self):
+        try:
+            opened = self._open_google_drive_url()
+        except Exception:
+            opened = False
+        self.notice_text.set(
+            "Google Drive opened in your default browser. Choose an existing project root and copy its link; this is not an embedded picker."
+            if opened else "Could not open Google Drive. You can still paste an existing project-root link.")
+
+    def _set_project_form_state(self, busy=False):
+        drive_mode = bool(self.latest and self.latest.get("providerMode") == "drive")
+        if self.latest is None:
+            can_add = False
+        elif drive_mode:
+            host = self.latest.get("host", {})
+            can_add = host.get("status") == "STOPPED" and not self.latest.get("hasEventHistory")
+        else:
+            can_add = bool(self.folder_validation_fixture and self.folder_validation_fixture.is_file())
+        for key, entry in self._project_entries.items():
+            if busy or not can_add:
+                state = "disabled"
+            elif drive_mode and key in {"promptsId", "reportsId"}:
+                state = "readonly"
+            else:
+                state = "normal"
+            entry.configure(state=state)
+        self.add_project_button.configure(state="disabled" if busy or not can_add else "normal")
+        self.open_drive_button.configure(state="normal" if drive_mode and not busy else "disabled")
 
     def _set_controls_busy(self, busy):
         state = "disabled" if busy else "normal"
@@ -345,8 +410,7 @@ class DashboardApp:
         for button in (self.enable_button, self.disable_button, self.edit_button, self.remove_button):
             button.configure(state=state)
         self.add_project_button.configure(state=state)
-        for entry in self.project_config_entries:
-            entry.configure(state=state)
+        self._set_project_form_state(busy)
 
     def _queue_refresh(self):
         if self.future is not None:
@@ -410,6 +474,7 @@ class DashboardApp:
             value = future.result()
             if future_kind == "onboarding":
                 self.last_error = None
+                self._show_discovered_folders(value)
                 self.notice_text.set("Drive folders validated; project added disabled. The UserHost was not started.")
                 self._queue_refresh()
                 return
@@ -497,8 +562,7 @@ class DashboardApp:
             self.resume_project_button.configure(state="disabled")
             for button in (self.edit_button, self.remove_button, self.add_project_button):
                 button.configure(state="disabled")
-            for entry in self.project_config_entries:
-                entry.configure(state="disabled")
+            self._set_project_form_state(busy=False)
             return
         host = self.latest["host"]
         drive_mode = self.latest.get("providerMode") == "drive"
@@ -507,19 +571,26 @@ class DashboardApp:
         self.mode_text.set("Provider mode: Google Drive (read-only; protected session required)" if drive_mode
                            else "Provider mode: fixture / offline")
         if drive_mode:
-            self.folder_fixture_label.configure(
-                text="Drive onboarding validates the existing root and exact direct-child folders using read-only metadata")
+            self.folder_fixture_label.configure(text=(
+                "Open Google Drive separately to copy an existing root link; ARM discovers the exact direct-child folders. "
+                "This is not an embedded Drive picker."))
             self.add_project_button.configure(text="Validate on Drive and Add Disabled Project")
+            self._project_labels["promptsId"].configure(text="Architect_Prompts folder ID (discovered; read-only)")
+            self._project_labels["reportsId"].configure(text="Executor_Reports folder ID (discovered; read-only)")
             self.mode_help.configure(text="Adding a Drive project performs read-only Google Drive metadata checks.\n"
                                      "Refresh remains local-only; project events go only to the configured endpoint.")
         elif self.folder_validation_fixture and self.folder_validation_fixture.is_file():
             self.folder_fixture_label.configure(text="Folder identity validation fixture loaded")
             self.add_project_button.configure(text="Validate and Add Disabled Project")
+            self._project_labels["promptsId"].configure(text="Architect_Prompts folder ID")
+            self._project_labels["reportsId"].configure(text="Executor_Reports folder ID")
             self.mode_help.configure(text="No Drive or Orchestrator connection is made by Refresh.\n"
                                      "Project content and local secret values are never shown.")
         else:
             self.folder_fixture_label.configure(text="Folder validation fixture unavailable")
             self.add_project_button.configure(text="Validate and Add Disabled Project")
+            self._project_labels["promptsId"].configure(text="Architect_Prompts folder ID")
+            self._project_labels["reportsId"].configure(text="Executor_Reports folder ID")
             self.mode_help.configure(text="No Drive or Orchestrator connection is made by Refresh.\n"
                                      "Project content and local secret values are never shown.")
         watch = self._pending_control_watch
@@ -586,16 +657,9 @@ class DashboardApp:
         self.pause_project_button.configure(state="normal" if selected_active else "disabled")
         self.resume_project_button.configure(state="normal" if selected_active else "disabled")
         if drive_mode:
-            can_add = host.get("status") == "STOPPED" and not self.latest["hasEventHistory"]
-            state = "normal" if can_add else "disabled"
-            self.add_project_button.configure(state=state)
-            for entry in self.project_config_entries:
-                entry.configure(state=state)
+            self._set_project_form_state(busy=False)
         else:
-            fixture_available = bool(self.folder_validation_fixture and self.folder_validation_fixture.is_file())
-            self.add_project_button.configure(state="normal" if fixture_available else "disabled")
-            for entry in self.project_config_entries:
-                entry.configure(state="normal" if fixture_available else "disabled")
+            self._set_project_form_state(busy=False)
 
     def _write_details(self, project):
         mode = "Google Drive (read-only)" if self.latest.get("providerMode") == "drive" else "Fixture / offline"

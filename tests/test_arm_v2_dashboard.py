@@ -144,6 +144,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_actual_tk_dashboard_add_enable_disable_and_no_implicit_start(self):
         app = self.open_app()
+        self.assertEqual(str(app.open_drive_button.cget("state")), "disabled")
         self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
         self.assertEqual(app.latest["projects"], [])
         original = self.registry_path.read_bytes()
@@ -404,12 +405,15 @@ class DashboardTests(unittest.TestCase):
                 patch("urllib.request.urlopen", side_effect=AssertionError("offline test attempted a network request")):
             app = self.open_app()
             self.assertEqual(str(app.add_project_button.cget("state")), "normal")
-            self.assertTrue(all(str(entry.cget("state")) == "normal" for entry in app.project_config_entries))
+            self.assertEqual(str(app._project_entries["rootUrl"].cget("state")), "normal")
+            self.assertEqual(str(app._project_entries["promptsId"].cget("state")), "readonly")
+            self.assertEqual(str(app._project_entries["reportsId"].cget("state")), "readonly")
             for button in (app.enable_button, app.disable_button, app.edit_button, app.remove_button):
                 self.assertEqual(str(button.cget("state")), "disabled")
             self.fill_project("project-c", "root-b", "http://127.0.0.1:49153/notify")
-            self.app.form["promptsId"].set("prompts-b")
-            self.app.form["reportsId"].set("reports-b")
+            # Even stale programmatic values cannot override automatic discovery.
+            self.app.form["promptsId"].set("stale-prompt-id")
+            self.app.form["reportsId"].set("stale-report-id")
             self.app.form["secretRef"].set("test:project-b")
             before = self.registry_path.read_bytes()
             self.app.drive_provider_factory = lambda _registry_path: fake
@@ -419,18 +423,66 @@ class DashboardTests(unittest.TestCase):
             document = ProjectRegistry(self.registry_path).load()
             project = next(item for item in document["folderProjects"] if item["projectId"] == "project-c")
             self.assertFalse(project["enabled"])
+            self.assertEqual(project["architectPromptsFolderId"], "prompts-b")
+            self.assertEqual(project["executorReportsFolderId"], "reports-b")
             self.assertIn(b"project-a", before)
             self.assertIn("validated", self.app.notice_text.get().lower())
+            self.assertEqual(self.app.form["promptsId"].get(), "prompts-b")
+            self.assertEqual(self.app.form["reportsId"].get(), "reports-b")
+            self.assertEqual(str(self.app._project_entries["promptsId"].cget("state")), "readonly")
+            self.assertEqual(str(self.app.open_drive_button.cget("state")), "normal")
             self.assertEqual(self.app.latest["host"]["status"], "STOPPED")
             self.assertEqual(self.app.latest["projects"][-1]["projectId"], "project-c")
             self.assertEqual(self.app.latest["projects"][-1]["enabled"], False)
             self.assertEqual(host_status(self.config_path)["status"], "STOPPED")
 
-    def test_drive_onboarding_rejects_mismatch_duplicate_and_transport_history_without_write(self):
+            # Changing the selected root invalidates previously discovered IDs.
+            self.app.form["rootUrl"].set("https://drive.google.com/drive/folders/root-a")
+            self.assertEqual(self.app.form["promptsId"].get(), "")
+            self.assertEqual(self.app.form["reportsId"].get(), "")
+            self.assertIn("cleared", self.app.notice_text.get().lower())
+
+    def test_open_google_drive_is_user_initiated_and_described_as_external(self):
+        self.configure_drive_mode_project()
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(
+                self.root / "synthetic-client-location.json")}, clear=False):
+            app = self.open_app()
+            with patch("arm_v2_dashboard.webbrowser.open", return_value=True) as open_url:
+                app._open_google_drive()
+            open_url.assert_called_once_with("https://drive.google.com/drive/my-drive", new=2)
+            self.assertIn("default browser", app.notice_text.get())
+            self.assertIn("not an embedded picker", app.notice_text.get())
+
+    def test_drive_onboarding_discovery_rejections_leave_registry_unchanged(self):
         drive_client_path = self.configure_drive_mode_project()
         values = {"displayName": "Project C", "projectId": "project-c", "repository": "owner/project-c",
                   "workspace": "", "rootUrl": "https://drive.google.com/drive/folders/root-b",
-                  "promptsId": "wrong-prompts", "reportsId": "reports-b",
+                  "endpoint": "http://127.0.0.1:49153/notify", "secretRef": "test:project-b"}
+        before = self.registry_path.read_bytes()
+        fixtures = []
+        missing = folder_fixture()
+        missing["items"] = [item for item in missing["items"] if item["id"] != "prompts-b"]
+        fixtures.append(("missing", missing))
+        duplicate = folder_fixture()
+        duplicate["items"].append(dict(next(item for item in duplicate["items"]
+                                            if item["id"] == "prompts-b"), id="prompts-b-duplicate"))
+        fixtures.append(("duplicate", duplicate))
+        wrong_parent = folder_fixture()
+        next(item for item in wrong_parent["items"] if item["id"] == "reports-b")["parents"] = ["root-b", "root-a"]
+        fixtures.append(("wrong-parent", wrong_parent))
+        fixtures.append(("provider-failure", {"items": [], "fail": True}))
+        with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
+                patch("arm_v2_userhost.status", return_value={"status": "STOPPED"}):
+            for name, fixture in fixtures:
+                with self.subTest(name=name), self.assertRaises(DashboardError):
+                    _drive_onboarding_transaction(self.config_path, values,
+                        lambda _path, data=fixture: FakeDriveProvider(data))
+                self.assertEqual(self.registry_path.read_bytes(), before)
+
+    def test_drive_onboarding_rejects_duplicate_and_transport_history_without_write(self):
+        drive_client_path = self.configure_drive_mode_project()
+        values = {"displayName": "Project C", "projectId": "project-c", "repository": "owner/project-c",
+                  "workspace": "", "rootUrl": "https://drive.google.com/drive/folders/root-b",
                   "endpoint": "http://127.0.0.1:49153/notify", "secretRef": "test:project-b"}
         before = self.registry_path.read_bytes()
         with patch.dict(os.environ, {"RELAY_GDRIVE_OAUTH_CLIENT_FILE": str(drive_client_path)}, clear=False), \
@@ -440,7 +492,7 @@ class DashboardTests(unittest.TestCase):
                     lambda _path: FakeDriveProvider(folder_fixture()))
             self.assertEqual(self.registry_path.read_bytes(), before)
 
-            duplicate = dict(values, projectId="project-a", promptsId="prompts-b")
+            duplicate = dict(values, projectId="project-a")
             with self.assertRaises(DashboardError):
                 _drive_onboarding_transaction(self.config_path, duplicate,
                     lambda _path: (_ for _ in ()).throw(AssertionError("duplicate must fail before provider access")))
