@@ -38,11 +38,51 @@ ENTRY_KEYS = {
     "eventId", "projectId", "destination", "payload", "status", "attemptCount",
     "nextAttemptAt", "lastErrorClass", "firstSeenAt", "updatedAt", "receipt",
 }
+BOUND_ENTRY_KEYS = ENTRY_KEYS | {"secretRef"}
 RECEIPT_KEYS = {"projectId", "eventId", "destination", "receivedAt", "signature"}
 
 
 class NotificationError(ValueError):
     """Sanitized transport, identity, or persistence failure."""
+
+
+def validate_notification_destination(value: str, *, allow_remote_https: bool = False) -> str:
+    """Accept loopback HTTP by default; allow only strict public HTTPS by opt-in."""
+    import ipaddress
+    if not isinstance(value, str) or len(value) > 2048:
+        raise NotificationError("invalid notification destination")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        raise NotificationError("invalid notification destination") from None
+    host = (parsed.hostname or "").lower()
+    path = parsed.path
+    if (not host or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or path and not path.startswith("/") or "\\" in path or any(ord(ch) < 32 for ch in value)
+            or any(segment in {".", ".."} for segment in path.split("/"))):
+        raise NotificationError("invalid notification destination")
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host == "localhost"
+    if loopback:
+        if parsed.scheme != "http" or port is None or not 1 <= port <= 65535:
+            raise NotificationError("invalid loopback notification destination")
+        return value
+    if not allow_remote_https or parsed.scheme != "https" or port not in (None, 443):
+        raise NotificationError("remote Orchestrator transport is not enabled")
+    labels = host.split(".")
+    if (host.endswith((".local", ".localhost", ".internal", ".lan", ".home.arpa"))
+            or len(labels) < 2 or host.endswith(".") or len(host) > 253
+            or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                   for label in labels)):
+        raise NotificationError("remote Orchestrator host is not an approved public DNS name")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return value
+    raise NotificationError("remote Orchestrator must use a DNS hostname")
 
 
 def _unique_pairs(pairs):
@@ -106,7 +146,8 @@ def _validate_ledger(value):
             or not isinstance(value["entries"], dict)):
         raise NotificationError("invalid notification ledger")
     for event_id, entry in value["entries"].items():
-        if (not isinstance(event_id, str) or not isinstance(entry, dict) or set(entry) != ENTRY_KEYS
+        if (not isinstance(event_id, str) or not isinstance(entry, dict)
+                or set(entry) not in (ENTRY_KEYS, BOUND_ENTRY_KEYS)
                 or entry["eventId"] != event_id or not isinstance(entry["projectId"], str)
                 or not isinstance(entry["destination"], str) or not isinstance(entry["payload"], dict)
                 or set(entry["payload"]) != EVENT_PAYLOAD_KEYS or entry["payload"].get("eventId") != event_id
@@ -116,6 +157,9 @@ def _validate_ledger(value):
                 or not isinstance(entry["firstSeenAt"], (int, float))
                 or not math.isfinite(entry["firstSeenAt"]) or not isinstance(entry["updatedAt"], (int, float))
                 or not math.isfinite(entry["updatedAt"])):
+            raise NotificationError("invalid notification ledger")
+        if ("secretRef" in entry and (not isinstance(entry["secretRef"], str)
+                or not entry["secretRef"] or len(entry["secretRef"]) > 200)):
             raise NotificationError("invalid notification ledger")
         retry_at = entry["nextAttemptAt"]
         if retry_at is not None and (not isinstance(retry_at, (int, float)) or not math.isfinite(retry_at)):
@@ -145,6 +189,8 @@ class NotificationSender:
     """
 
     def __init__(self, registry_path, detector_state_path, ledger_path, *, secret_resolver,
+                 project_secret_resolver=None, allow_remote_https=False,
+                 opener_factory=build_opener,
                  clock=time.time, writer=_atomic_write, timeout_seconds=3.0,
                  retry_base_seconds=2, retry_max_seconds=MAX_RETRY_SECONDS):
         self.registry = ProjectRegistry(registry_path)
@@ -156,10 +202,15 @@ class NotificationSender:
         self.retry_base_seconds = retry_base_seconds
         self.retry_max_seconds = retry_max_seconds
         self.secret_resolver = secret_resolver
+        self.project_secret_resolver = project_secret_resolver
+        self.allow_remote_https = allow_remote_https
+        self.opener_factory = opener_factory
         paths = [self.registry.path.resolve(), self.detector_path, self.ledger_path]
         if any(_same_or_overlapping(paths[i], paths[j]) for i in range(len(paths)) for j in range(i + 1, len(paths))):
             raise NotificationError("registry, detector state, and notification ledger paths overlap")
-        if (not callable(secret_resolver) or not isinstance(timeout_seconds, (int, float))
+        if (not callable(secret_resolver) or type(allow_remote_https) is not bool
+                or project_secret_resolver is not None and not callable(project_secret_resolver)
+                or not isinstance(timeout_seconds, (int, float))
                 or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30
                 or type(retry_base_seconds) is not int or not 1 <= retry_base_seconds <= MAX_RETRY_SECONDS
                 or type(retry_max_seconds) is not int
@@ -176,6 +227,11 @@ class NotificationSender:
         source_events = {}
         folder_bindings = {}
         for project in registry["folderProjects"]:
+            try:
+                validate_notification_destination(project["orchestratorEndpoint"],
+                                                  allow_remote_https=self.allow_remote_https)
+            except NotificationError:
+                raise NotificationError("project notification destination is not allowed") from None
             folder_bindings[(project["projectId"], project["architectPromptsFolderId"])] = ("PROMPT_CHANGED", project)
             folder_bindings[(project["projectId"], project["executorReportsFolderId"])] = ("REPORT_CHANGED", project)
         for event in state["events"]:
@@ -199,6 +255,11 @@ class NotificationSender:
             if (entry["projectId"] != project["projectId"] or entry["destination"] != project["orchestratorEndpoint"]
                     or entry["payload"] != expected):
                 raise NotificationError("notification ledger identity or destination binding changed")
+            configured_reference = project.get("orchestratorSecretRef")
+            if (not isinstance(configured_reference, str)
+                    or entry.get("secretRef") is not None and entry["secretRef"] != configured_reference
+                    or entry.get("secretRef") is None and not configured_reference.startswith("test:")):
+                raise NotificationError("notification ledger secret reference binding changed")
             if entry["status"] == "ACKED":
                 secret = self._resolve_secret(project)
                 proof = {"projectId": entry["projectId"], "eventId": entry["eventId"]}
@@ -211,10 +272,22 @@ class NotificationSender:
         if not isinstance(reference, str) or not reference:
             raise NotificationError("project has no Orchestrator authentication reference")
         try:
-            secret = self.secret_resolver(reference)
+            destination = project.get("orchestratorEndpoint")
+            remote = not _is_loopback_destination(destination)
+            if remote:
+                if not self.allow_remote_https or not reference.startswith("orchestrator:") \
+                        or self.project_secret_resolver is None:
+                    raise NotificationError("protected remote Orchestrator key is unavailable")
+                secret = self.project_secret_resolver(reference, project["projectId"], destination)
+                minimum = 32
+            else:
+                if not reference.startswith("test:"):
+                    raise NotificationError("loopback delivery requires an offline test key")
+                secret = self.secret_resolver(reference)
+                minimum = 16
         except Exception:
             raise NotificationError("Orchestrator authentication reference could not be resolved") from None
-        if not isinstance(secret, bytes) or len(secret) < 16:
+        if not isinstance(secret, bytes) or len(secret) < minimum:
             raise NotificationError("resolved Orchestrator authentication key is invalid")
         return secret
 
@@ -243,7 +316,7 @@ class NotificationSender:
             "Accept": "application/json",
             "X-ARM-Request-Signature": hmac.new(secret, body, hashlib.sha256).hexdigest(),
         })
-        opener = build_opener(ProxyHandler({}), _NoRedirect())
+        opener = self.opener_factory(ProxyHandler({}), _NoRedirect())
         try:
             response = opener.open(request, timeout=self.timeout_seconds)
             try:
@@ -313,6 +386,7 @@ class NotificationSender:
                 payload = _event_payload(event)
                 entry = {
                     "eventId": event_id, "projectId": project["projectId"],
+                    "secretRef": project["orchestratorSecretRef"],
                     "destination": project["orchestratorEndpoint"], "payload": payload,
                     "status": "PENDING", "attemptCount": 0, "nextAttemptAt": None,
                     "lastErrorClass": None, "firstSeenAt": now, "updatedAt": now, "receipt": None,
@@ -391,6 +465,16 @@ def _event_payload(event):
             "fileId": event["fileId"], "providerVersion": event["providerVersion"],
             "driveUrl": event["driveUrl"], "eventId": event["eventId"],
             "detectedAt": event["detectedAt"]}
+
+
+def _is_loopback_destination(value):
+    import ipaddress
+    try:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        return host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except (ValueError, TypeError):
+        return False
 
 
 def _http_error_class(status):

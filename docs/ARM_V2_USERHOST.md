@@ -48,3 +48,17 @@ The real detached UserHost passed one bounded live run using the existing protec
 The bounded offline repair preserves `DriveAuthError` across the Drive folder-validation boundary in `arm_v2_userhost.py`; unrelated validation/provider exceptions remain sanitized as `UserHostError`. The existing ForegroundMonitor fatal-authentication path is unchanged. A regression injects a refresh failure after session construction and verifies terminal worker exit, sanitized status, safe lock release, no delivery, and preservation of the pre-existing pending notification. Ordinary provider errors retain bounded degraded-scan behavior.
 
 Validation: focused regressions 4/4; UserHost and ForegroundMonitor modules 22/22; full unittest discovery 190/190; Python compilation and `git diff --check` passed. No live operation or Git publication occurred. This repair does not resolve the historical limitations in the live qualification record: a durable live ledger snapshot is unavailable, and overwritten M05 demonstration evidence is not reconstructed.
+
+## ARM.M06.S2F remote HTTPS transport - offline candidate
+
+Remote notification is opt-in through `notificationTransportMode: "https-remote"` in an explicit `providerMode: "drive"` UserHost configuration. If the option is absent, the existing loopback transport remains active. Fixture mode cannot use remote destinations. Remote projects require HTTPS on port 443, a public DNS hostname, and a project-specific `orchestrator:` secret reference; local simulated receivers continue using HTTP loopback and `test:` references.
+
+The remote sender reuses the existing metadata payload, HMAC request signature, signed matching ACK, durable ledger and retry/restart behavior. It uses no ambient proxy, refuses redirects, and retains default TLS certificate and hostname checks. The worker allows only configured destinations and rejects remote DNS results that are not globally routable.
+
+Provision an existing Orchestrator secret from an interactive console; the secret is requested with hidden input and is not passed as an argument:
+
+```powershell
+python arm_orchestrator_secrets.py --registry <absolute-local-registry.json> --ledger <absolute-local-ledger.json> --project-id <project-id>
+```
+
+The key store is separate from the Google Drive OAuth session. It uses the existing current-user DPAPI primitive and binds protected data to the project ID, endpoint and secret reference. Provisioning creates a key file only if absent and refuses any project with pending or ACKed ledger history. No key generation, rotation, deletion, production endpoint setup or remote qualification is part of this offline candidate. See `docs/ARM_M06_STAGE2F.md` and `docs/VALIDATION.md` for qualification results and limitations.

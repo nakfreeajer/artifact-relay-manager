@@ -18,7 +18,8 @@ class ForegroundMonitor:
     """
 
     def __init__(self, registry_path, detector_state_path, notification_ledger_path, *,
-                 provider, secret_resolver, clock=time.time, sleeper=time.sleep,
+                 provider, secret_resolver, project_secret_resolver=None,
+                 allow_remote_https=False, clock=time.time, sleeper=time.sleep,
                  interval_seconds=10, max_backoff_seconds=300, dispatch_limit=100):
         if (type(interval_seconds) is not int or not 1 <= interval_seconds <= 3600
                 or type(max_backoff_seconds) is not int
@@ -29,7 +30,9 @@ class ForegroundMonitor:
         self.registry = ProjectRegistry(registry_path)
         self.detector = DriveChangeDetector(registry_path, detector_state_path)
         self.sender = NotificationSender(registry_path, detector_state_path,
-            notification_ledger_path, secret_resolver=secret_resolver, clock=clock)
+            notification_ledger_path, secret_resolver=secret_resolver,
+            project_secret_resolver=project_secret_resolver,
+            allow_remote_https=allow_remote_https, clock=clock)
         self.provider = provider
         self.clock = clock
         self.sleeper = sleeper

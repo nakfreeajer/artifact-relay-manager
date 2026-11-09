@@ -29,6 +29,8 @@ from arm_pause_state import PauseStateError, PauseStateStore, public_pause_state
 from drive_auth import DriveAuthError, DriveAuthSession
 from drive_adapter import DriveClient, DriveHttpError
 from drive_change_detector import DetectionError, DriveMetadataProvider
+from arm_notification import validate_notification_destination
+from arm_orchestrator_secrets import OrchestratorSecretStore
 import project_folder_config
 from project_registry import ProjectRegistry, ProjectRegistryError
 from relay_userhost import SingleInstanceLock
@@ -46,6 +48,7 @@ COMMON_CONFIG_KEYS = {
     "schemaVersion", "registryPath", "detectorStatePath", "notificationLedgerPath",
     "testSecrets", "intervalSeconds", "stopTimeoutSeconds",
 }
+REMOTE_TRANSPORT_MODES = {"loopback", "https-remote"}
 MAX_CONFIG_BYTES = 32768
 MAX_HEARTBEAT_BYTES = 32768
 MAX_STOP_SECONDS = 60
@@ -265,6 +268,8 @@ class HostConfig:
         self.detector_path = _canonical_output_file(values["detectorStatePath"], "detector state")
         self.ledger_path = _canonical_output_file(values["notificationLedgerPath"], "notification ledger")
         self.provider_mode = values.get("providerMode", "fixture")
+        self.notification_transport_mode = values.get("notificationTransportMode", "loopback")
+        self.allow_remote_https = self.notification_transport_mode == "https-remote"
         self.fixture_path = (_canonical_file(values["providerFixturePath"], "provider fixture")
                              if self.provider_mode == "fixture" else None)
         self.test_secrets = {key: base64.b64decode(value, validate=True)
@@ -315,16 +320,28 @@ def load_config(path: Path) -> HostConfig:
                       and values.get("providerMode") == "drive")
     bounded_drive = (keys == COMMON_CONFIG_KEYS | {"providerMode", "maxMonitorObservations"}
                      and values.get("providerMode") == "drive")
-    if not (legacy_fixture or explicit_fixture or explicit_drive or bounded_drive):
+    mode_fixture = (keys == COMMON_CONFIG_KEYS | {"providerMode", "providerFixturePath", "notificationTransportMode"}
+                    and values.get("providerMode") == "fixture")
+    mode_drive = (keys == COMMON_CONFIG_KEYS | {"providerMode", "notificationTransportMode"}
+                  and values.get("providerMode") == "drive")
+    bounded_mode_drive = (keys == COMMON_CONFIG_KEYS | {"providerMode", "maxMonitorObservations",
+                                                           "notificationTransportMode"}
+                          and values.get("providerMode") == "drive")
+    if not (legacy_fixture or explicit_fixture or explicit_drive or bounded_drive
+            or mode_fixture or mode_drive or bounded_mode_drive):
         raise UserHostError("host configuration schema is invalid")
     if type(values.get("schemaVersion")) is not int or values["schemaVersion"] != 1:
         raise UserHostError("host configuration schema is invalid")
-    if bounded_drive and (type(values.get("maxMonitorObservations")) is not int
+    has_bounded_drive = bounded_drive or bounded_mode_drive
+    if has_bounded_drive and (type(values.get("maxMonitorObservations")) is not int
                           or not 1 <= values["maxMonitorObservations"] <= 6):
         raise UserHostError("Drive monitor observation limit must be between 1 and 6")
-    if not bounded_drive and "maxMonitorObservations" in values:
+    if not has_bounded_drive and "maxMonitorObservations" in values:
         raise UserHostError("monitor observation limit is valid only in explicit Drive mode")
     provider_mode = "fixture" if legacy_fixture else values.get("providerMode")
+    transport_mode = values.get("notificationTransportMode", "loopback")
+    if transport_mode not in REMOTE_TRANSPORT_MODES or transport_mode == "https-remote" and provider_mode != "drive":
+        raise UserHostError("remote notification transport requires explicit Drive mode")
     for name in ("registryPath", "detectorStatePath", "notificationLedgerPath"):
         if not isinstance(values[name], str) or not Path(values[name]).is_absolute():
             raise UserHostError("host runtime path is invalid")
@@ -333,7 +350,9 @@ def load_config(path: Path) -> HostConfig:
     if type(values["stopTimeoutSeconds"]) is not int or not 1 <= values["stopTimeoutSeconds"] <= MAX_STOP_SECONDS:
         raise UserHostError("host stop timeout is invalid")
     secrets_value = values["testSecrets"]
-    if (not isinstance(secrets_value, dict) or not secrets_value or len(secrets_value) > 100
+    allow_empty_test_secrets = transport_mode == "https-remote"
+    if (not isinstance(secrets_value, dict) or (not secrets_value and not allow_empty_test_secrets)
+            or len(secrets_value) > 100
             or any(not isinstance(k, str) or not k.startswith("test:") or len(k) > 256
                    or not isinstance(v, str) or len(v) > 2048 for k, v in secrets_value.items())):
         raise UserHostError("offline test key map is invalid")
@@ -359,7 +378,7 @@ def load_config(path: Path) -> HostConfig:
     for p in (config.detector_path, config.ledger_path):
         if not _inside_local_app_data(p.parent):
             raise UserHostError("host state files must remain under current-user local data")
-    _ensure_loopback_registry(config.registry_path)
+    _ensure_loopback_registry(config.registry_path, allow_remote_https=config.allow_remote_https)
     if config.fixture_path is not None:
         _read_json(config.fixture_path, 4 * 1024 * 1024)
     return config
@@ -451,7 +470,7 @@ class AuthenticatedDriveMetadataProvider:
             raise
 
 
-def _provider_network_destination_allowed(provider_mode: str, address) -> bool:
+def _provider_network_destination_allowed(provider_mode: str, address, remote_destinations=()) -> bool:
     if (not isinstance(address, tuple) or len(address) < 2
             or not isinstance(address[0], str) or type(address[1]) is not int):
         return False
@@ -462,8 +481,10 @@ def _provider_network_destination_allowed(provider_mode: str, address) -> bool:
     except ValueError:
         if host.casefold() == "localhost":
             return True
-    return (provider_mode == "drive" and port == 443
-            and host.casefold() in {"www.googleapis.com", "oauth2.googleapis.com"})
+    if (provider_mode == "drive" and port == 443
+            and host.casefold() in {"www.googleapis.com", "oauth2.googleapis.com"}):
+        return True
+    return (host.casefold(), port) in set(remote_destinations)
 
 
 def _google_token_url_allowed(value: str) -> bool:
@@ -505,26 +526,57 @@ class _RestrictedGoogleTokenRequest:
         return self._request(url, *args, **kwargs)
 
 
-def _ensure_loopback_registry(registry_path: Path) -> dict:
+def _ensure_loopback_registry(registry_path: Path, *, allow_remote_https: bool = False) -> dict:
     try:
         registry = ProjectRegistry(registry_path).load()
     except Exception:
         raise UserHostError("configured project registry is invalid") from None
     for project in registry["folderProjects"]:
-        parsed = urlsplit(project["orchestratorEndpoint"])
+        endpoint = project["orchestratorEndpoint"]
+        try:
+            validate_notification_destination(endpoint, allow_remote_https=allow_remote_https)
+            parsed = urlsplit(endpoint)
+        except Exception:
+            raise UserHostError("configured Orchestrator destination is not allowed") from None
         try:
             host = parsed.hostname or ""
             is_loopback = host.casefold() == "localhost" or ipaddress.ip_address(host).is_loopback
         except ValueError:
             is_loopback = False
-        if (parsed.scheme != "http" or not is_loopback or parsed.username or parsed.password
-                or parsed.port is None or not parsed.path.startswith("/") or len(parsed.path) > 512
-                or "\\" in parsed.path or ".." in parsed.path or parsed.query or parsed.fragment):
-            raise UserHostError("M05 accepts only local simulated Orchestrator endpoints")
         reference = project.get("orchestratorSecretRef")
-        if not isinstance(reference, str) or not reference.startswith("test:"):
-            raise UserHostError("M05 accepts only offline test secret references")
+        if is_loopback:
+            if (parsed.port is None or not parsed.path.startswith("/") or len(parsed.path) > 512
+                    or "\\" in parsed.path or ".." in parsed.path or parsed.query or parsed.fragment):
+                raise UserHostError("local simulated Orchestrator endpoint is invalid")
+            if not isinstance(reference, str) or not reference.startswith("test:"):
+                raise UserHostError("loopback Orchestrators require offline test secret references")
+        elif (not allow_remote_https or not isinstance(reference, str)
+              or not reference.startswith("orchestrator:")):
+            raise UserHostError("remote Orchestrators require explicit HTTPS mode and protected references")
     return registry
+
+
+def _remote_destinations(registry: dict) -> set[tuple[str, int]]:
+    destinations = set()
+    for project in registry["folderProjects"]:
+        endpoint = project["orchestratorEndpoint"]
+        parsed = urlsplit(endpoint)
+        try:
+            host = parsed.hostname or ""
+            ipaddress.ip_address(host)
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = host.casefold() == "localhost"
+        if not is_loopback:
+            destinations.add((host.casefold(), parsed.port or 443))
+    return destinations
+
+
+def _all_public_dns_results(results) -> bool:
+    try:
+        return bool(results) and all(ipaddress.ip_address(item[4][0]).is_global for item in results)
+    except (IndexError, TypeError, ValueError):
+        return False
 
 
 class ReloadingFixtureProvider:
@@ -709,8 +761,12 @@ def _read_stop(config: HostConfig, worker_id: str) -> bool:
 
 
 def _worker(config_path: Path, *, session_factory=DriveAuthSession,
-            client_factory=DriveClient, fixture_provider_factory=ReloadingFixtureProvider) -> int:
+            client_factory=DriveClient, fixture_provider_factory=ReloadingFixtureProvider,
+            secret_store_factory=OrchestratorSecretStore) -> int:
     config = load_config(config_path)
+    initial_registry = _ensure_loopback_registry(
+        config.registry_path, allow_remote_https=config.allow_remote_https)
+    remote_destinations = _remote_destinations(initial_registry) if config.allow_remote_https else set()
     if "RELAY_GDRIVE_ACCESS_TOKEN" in os.environ:
         raise UserHostError("UserHost refuses access-token environment inputs")
     if config.provider_mode == "fixture" and "RELAY_GDRIVE_OAUTH_CLIENT_FILE" in os.environ:
@@ -721,18 +777,36 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
         return 3
     worker_id = secrets.token_hex(16)
     stop_network = socket.create_connection
+    stop_getaddrinfo = socket.getaddrinfo
     removed_proxy_environment = {}
     if config.provider_mode == "drive":
         for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
             if name in os.environ:
                 removed_proxy_environment[name] = os.environ.pop(name)
 
+    def guarded_getaddrinfo(host, port, *args, **kwargs):
+        normalized_host = host.casefold() if isinstance(host, str) else ""
+        try:
+            normalized_port = int(port)
+        except (TypeError, ValueError):
+            normalized_port = -1
+        if (normalized_host, normalized_port) in remote_destinations:
+            results = stop_getaddrinfo(host, port, *args, **kwargs)
+            if not _all_public_dns_results(results):
+                raise OSError("UserHost blocked a non-public Orchestrator address")
+            return results
+        if not _provider_network_destination_allowed(config.provider_mode, (host, normalized_port)):
+            raise OSError("UserHost blocked a network name outside its provider allowlist")
+        return stop_getaddrinfo(host, port, *args, **kwargs)
+
     def guarded_connection(address, *args, **kwargs):
-        if not _provider_network_destination_allowed(config.provider_mode, address):
+        if not _provider_network_destination_allowed(config.provider_mode, address, remote_destinations):
             raise OSError("UserHost blocked a network destination outside its provider allowlist")
         return stop_network(address, *args, **kwargs)
 
     socket.create_connection = guarded_connection
+    if config.allow_remote_https:
+        socket.getaddrinfo = guarded_getaddrinfo
     cycle = 0
     recent = None
     pause_state = {"globalPaused": False, "pausedProjectIds": [], "pendingRequest": None,
@@ -740,17 +814,24 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
     try:
         cycle = _safe_prior_cycle(config)
         _heartbeat.started_at = datetime.now(timezone.utc).isoformat()
-        registry = _ensure_loopback_registry(config.registry_path)
+        registry = _ensure_loopback_registry(config.registry_path,
+                                             allow_remote_https=config.allow_remote_https)
         project_ids = [project["projectId"] for project in registry["folderProjects"]]
         pause_state = config.pause_store.initialize(project_ids)
         ready = _heartbeat(config, state="STARTING", worker_id=worker_id, cycle=cycle,
                            recent=None, pause_state=pause_state)
         _atomic_json(config.heartbeat_path, ready)
         _append_log(config, {"recentCycle": None})
-        secret_refs = {project.get("orchestratorSecretRef") for project in registry["folderProjects"]
-                       if project["enabled"]}
-        if any(reference not in config.test_secrets for reference in secret_refs):
-            raise UserHostError("offline test key is missing for an enabled project")
+        remote_secret_store = secret_store_factory() if config.allow_remote_https else None
+        for project in registry["folderProjects"]:
+            if project["enabled"] and project["orchestratorSecretRef"].startswith("orchestrator:"):
+                if remote_secret_store is None:
+                    raise UserHostError("protected remote Orchestrator key is unavailable")
+                try:
+                    remote_secret_store.resolve(project["projectId"], project["orchestratorEndpoint"],
+                                                project["orchestratorSecretRef"])
+                except Exception:
+                    raise UserHostError("protected remote Orchestrator key is unavailable") from None
         if config.provider_mode == "fixture":
             provider = fixture_provider_factory(config.fixture_path)
         else:
@@ -765,6 +846,10 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
             config.registry_path, config.detector_path, config.ledger_path,
             provider=provider,
             secret_resolver=config.test_secrets.get,
+            project_secret_resolver=(None if remote_secret_store is None else
+                lambda reference, project_id, destination: remote_secret_store.resolve(
+                    project_id, destination, reference)),
+            allow_remote_https=config.allow_remote_https,
             interval_seconds=config.interval_seconds, dispatch_limit=8,
         )
         budget = _observation_budget(config)
@@ -775,7 +860,8 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
                 _atomic_json(config.heartbeat_path, stopped)
                 _append_log(config, {"recentCycle": recent})
                 return 0
-            registry = _ensure_loopback_registry(config.registry_path)
+            registry = _ensure_loopback_registry(config.registry_path,
+                                                 allow_remote_https=config.allow_remote_https)
             project_ids = [project["projectId"] for project in registry["folderProjects"]]
             pause_state = config.pause_store.load(project_ids)
             if pause_state["pendingRequest"] is not None:
@@ -786,9 +872,17 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
                 _atomic_json(config.heartbeat_path, stopped)
                 _append_log(config, {"recentCycle": recent})
                 return 0
-            secret_refs = {project.get("orchestratorSecretRef") for project in registry["folderProjects"]}
-            if any(reference not in config.test_secrets for reference in secret_refs):
-                raise UserHostError("offline test key is missing for a configured project")
+            for project in registry["folderProjects"]:
+                reference = project.get("orchestratorSecretRef")
+                if reference.startswith("test:") and reference not in config.test_secrets:
+                    raise UserHostError("offline test key is missing for a configured project")
+                if reference.startswith("orchestrator:") and project["enabled"]:
+                    if remote_secret_store is None:
+                        raise UserHostError("protected remote Orchestrator key is unavailable")
+                    try:
+                        remote_secret_store.resolve(project["projectId"], project["orchestratorEndpoint"], reference)
+                    except Exception:
+                        raise UserHostError("protected remote Orchestrator key is unavailable") from None
             enabled_ids = [project["projectId"] for project in registry["folderProjects"]
                            if project["enabled"]]
             unpaused_ids = [project_id for project_id in enabled_ids
@@ -828,7 +922,8 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
                     _atomic_json(config.heartbeat_path, stopped)
                     _append_log(config, {"recentCycle": recent})
                     return 0
-                registry = _ensure_loopback_registry(config.registry_path)
+                registry = _ensure_loopback_registry(config.registry_path,
+                                                     allow_remote_https=config.allow_remote_https)
                 project_ids = [project["projectId"] for project in registry["folderProjects"]]
                 pause_state = config.pause_store.load(project_ids)
                 if pause_state["pendingRequest"] is not None:
@@ -851,7 +946,8 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
             while time.monotonic() < deadline:
                 if _read_stop(config, worker_id):
                     break
-                registry = _ensure_loopback_registry(config.registry_path)
+                registry = _ensure_loopback_registry(config.registry_path,
+                                                     allow_remote_https=config.allow_remote_https)
                 project_ids = [project["projectId"] for project in registry["folderProjects"]]
                 pending_state = config.pause_store.load(project_ids)
                 if pending_state["pendingRequest"] is not None:
@@ -869,6 +965,8 @@ def _worker(config_path: Path, *, session_factory=DriveAuthSession,
         return 2
     finally:
         socket.create_connection = stop_network
+        if config.allow_remote_https:
+            socket.getaddrinfo = stop_getaddrinfo
         os.environ.update(removed_proxy_environment)
         worker_lock.release()
 
@@ -927,7 +1025,8 @@ def _verified_heartbeat(config: HostConfig, *, require_lock: bool) -> dict | Non
 
 def status(config_path: Path) -> dict:
     config = load_config(config_path)
-    registry = _ensure_loopback_registry(config.registry_path)
+    registry = _ensure_loopback_registry(config.registry_path,
+                                         allow_remote_https=config.allow_remote_https)
     project_ids = [project["projectId"] for project in registry["folderProjects"]]
     pause_state = config.pause_store.load(project_ids)
     pause_summary = public_pause_state(pause_state)
@@ -1017,7 +1116,8 @@ def _bounded_worker_completed(config: HostConfig, worker) -> dict | None:
 
 def start(config_path: Path, *, ready_timeout_seconds: float = 15.0) -> int:
     config = load_config(config_path)
-    registry = _ensure_loopback_registry(config.registry_path)
+    registry = _ensure_loopback_registry(config.registry_path,
+                                         allow_remote_https=config.allow_remote_https)
     config.pause_store.load([project["projectId"] for project in registry["folderProjects"]])
     config.control_dir.mkdir(parents=True, exist_ok=True)
     start_lock = SingleInstanceLock(config.start_lock_path)
@@ -1114,7 +1214,8 @@ def stop(config_path: Path) -> int:
 
 def pause_control(config_path: Path, command: str, project_id: str | None = None) -> int:
     config = load_config(config_path)
-    registry = _ensure_loopback_registry(config.registry_path)
+    registry = _ensure_loopback_registry(config.registry_path,
+                                         allow_remote_https=config.allow_remote_https)
     worker_busy = _probe_lock(config.worker_lock_path)
     if not worker_busy:
         return _emit({"result": "INVALID_OWNER", "error": "WORKER_NOT_RUNNING"})
